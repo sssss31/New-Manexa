@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - run: npx prisma generate
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+        env:
+          DATABASE_URL: file:./ci.db
+      - name: Smoke — schema push + seed
+        run: |
+          npx prisma db push --skip-generate
+          npx tsx prisma/seed.ts
+        env:
+          DATABASE_URL: file:./ci.db
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t manexa:${{ github.sha }} .
+      # Push to ECR + ArgoCD sync happens here in the production pipeline:
+      # - aws-actions/amazon-ecr-login, docker push, update Helm values SHA.

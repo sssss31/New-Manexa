@@ -1,0 +1,22 @@
+node_modules
+.next
+out
+
+# Environment — real values are never committed; only the *.example templates are
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+!.env.example
+!.env.production.example
+
+# Prisma / SQLite leftovers (project is PostgreSQL only)
+prisma/dev.db
+prisma/dev.db-journal
+prisma/*.db
+
+*.log
+.DS_Store
+next-env.d.ts
+coverage

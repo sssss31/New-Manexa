@@ -1,0 +1,217 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   MANEXA design system — dark-first, neon-on-black.
+   Tokens are RGB channels so Tailwind opacity utilities work.
+   Brand: #B6FF2A neon · #000 black · #111 surface · #181818 card
+   ============================================================ */
+
+:root {
+  --bg: 0 0 0;            /* #000000 pure black */
+  --surface: 17 17 17;    /* #111111 */
+  --elevated: 30 30 30;   /* #1E1E1E inputs / hovers */
+  --card: 24 24 24;       /* #181818 */
+  --border: 42 42 42;     /* #2A2A2A */
+  --fg: 255 255 255;      /* #FFFFFF */
+  --muted: 189 189 189;   /* #BDBDBD */
+  --subtle: 122 122 122;  /* #7A7A7A */
+  --accent: 182 255 42;   /* #B6FF2A neon green */
+  --accent-fg: 0 0 0;     /* black text on neon */
+  --success: 73 255 120;  /* #49FF78 */
+  --warning: 255 193 7;   /* #FFC107 */
+  --error: 255 82 82;     /* #FF5252 */
+  --info: 189 189 189;    /* gray — no extra accent colors */
+}
+
+:root.light {
+  --bg: 250 250 250;
+  --surface: 255 255 255;
+  --elevated: 243 244 243;
+  --card: 255 255 255;
+  --border: 224 226 224;
+  --fg: 10 12 8;
+  --muted: 82 88 78;
+  --subtle: 140 146 136;
+  --accent: 90 140 0;     /* darker lime for WCAG contrast on white */
+  --accent-fg: 255 255 255;
+  --success: 22 130 60;
+  --warning: 150 110 10;
+  --error: 190 40 50;
+  --info: 90 96 88;
+}
+
+html, body {
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
+  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04";
+  min-height: 100vh;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-sora), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+/* Numbers render in IBM Plex Mono wherever tabular-nums is requested */
+.tabular-nums, .stat-value, .font-nums {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+* { border-color: rgb(var(--border)); }
+::selection { background: rgb(var(--accent) / 0.35); }
+
+/* Accessibility — visible neon focus ring everywhere */
+:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ---- Motion ---- */
+@keyframes mnx-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes mnx-shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+@keyframes mnx-pop {
+  0%   { transform: scale(0.97); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-fade-up { animation: mnx-fade-up 0.28s cubic-bezier(0.21, 1, 0.36, 1) both; }
+.animate-pop    { animation: mnx-pop 0.18s cubic-bezier(0.21, 1, 0.36, 1) both; }
+
+.skeleton {
+  @apply rounded-xl bg-elevated;
+  background-image: linear-gradient(90deg,
+    rgb(var(--elevated)) 0px,
+    rgb(var(--card)) 200px,
+    rgb(var(--elevated)) 400px);
+  background-size: 800px 100%;
+  animation: mnx-shimmer 1.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ---- Surfaces (16px radius) ---- */
+.card     { @apply bg-card border border-border rounded-2xl; }
+.panel    { @apply bg-surface border border-border rounded-2xl; }
+.elevated { @apply bg-elevated border border-border rounded-2xl; }
+
+/* ---- Buttons — black bg, neon outline, neon glow on hover ---- */
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl text-sm font-medium
+         transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed
+         px-3.5 py-2 leading-tight select-none;
+}
+.btn-primary {
+  @apply btn text-accent border border-accent/60;
+  background: rgb(var(--bg));
+}
+.btn-primary:hover {
+  background: rgb(var(--accent) / 0.1);
+  border-color: rgb(var(--accent));
+  box-shadow: 0 0 24px -6px rgb(var(--accent) / 0.55);
+}
+.btn-primary:active { transform: translateY(1px); }
+.btn-secondary {
+  @apply btn bg-elevated text-fg border border-border;
+}
+.btn-secondary:hover { border-color: rgb(var(--accent) / 0.4); background: rgb(var(--accent) / 0.06); }
+.btn-ghost {
+  @apply btn bg-transparent text-fg border border-transparent;
+}
+.btn-ghost:hover { background: rgb(var(--accent) / 0.08); }
+.btn-danger {
+  @apply btn text-error border border-error/40 bg-transparent;
+}
+.btn-danger:hover { background: rgb(var(--error) / 0.1); border-color: rgb(var(--error)); }
+
+/* ---- Forms ---- */
+.input, .select, .textarea {
+  @apply w-full bg-elevated border border-border rounded-xl px-3 py-2 text-sm
+         text-fg placeholder:text-subtle transition-colors;
+}
+.input:focus, .select:focus, .textarea:focus {
+  outline: none;
+  border-color: rgb(var(--accent) / 0.7);
+  box-shadow: 0 0 0 3px rgb(var(--accent) / 0.15);
+}
+.textarea { @apply min-h-[96px] resize-y; }
+.label { @apply block text-xs uppercase tracking-wider text-muted mb-1.5 font-medium; }
+
+/* ---- Badges ---- */
+.badge {
+  @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-medium border;
+}
+.badge-success { @apply bg-success/10 text-success border-success/30; }
+.badge-warning { @apply bg-warning/10 text-warning border-warning/30; }
+.badge-error   { @apply bg-error/10 text-error border-error/30; }
+.badge-info    { @apply bg-info/10 text-info border-info/30; }
+.badge-muted   { @apply bg-elevated text-muted border-border; }
+.badge-accent  { @apply bg-accent/10 text-accent border-accent/30; }
+
+/* ---- Stats ---- */
+.stat { @apply flex flex-col gap-1 p-4 card; }
+.stat-label { @apply text-xs uppercase tracking-wider text-muted font-medium; }
+.stat-value { @apply text-2xl font-semibold text-fg; }
+.stat-sub   { @apply text-xs text-muted; }
+
+/* ---- Tables ---- */
+.th { @apply text-left text-xs uppercase tracking-wider text-muted font-medium px-4 py-2.5; }
+.td { @apply px-4 py-3 text-sm text-fg align-middle; }
+.row-hover { transition: background 0.15s ease; }
+.row-hover:hover { background: rgb(var(--accent) / 0.04); }
+.dot { @apply inline-block w-1.5 h-1.5 rounded-full bg-accent; }
+
+.table-wrap { @apply overflow-auto rounded-xl border border-border; max-height: 70vh; }
+.table-wrap thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: rgb(var(--card));
+  box-shadow: inset 0 -1px 0 rgb(var(--border));
+}
+
+/* ---- Nav ---- */
+.nav-link {
+  @apply flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-muted transition-colors duration-150;
+}
+.nav-link:hover { color: rgb(var(--fg)); background: rgb(var(--accent) / 0.07); }
+.nav-link.active {
+  @apply text-accent;
+  background: rgb(var(--accent) / 0.1);
+}
+.nav-link.active svg, .nav-link.active span:first-child { color: rgb(var(--accent)); }
+
+/* ---- Scrollbars ---- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: rgb(var(--surface)); }
+::-webkit-scrollbar-thumb { background: rgb(var(--border)); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--accent) / 0.5); }
+
+/* ---- Utility ---- */
+.hairline { @apply border-t border-border; }
+.section-h { @apply text-sm uppercase tracking-wider text-muted font-medium; }
+.sr-skip {
+  @apply sr-only;
+}
+.sr-skip:focus {
+  position: fixed; left: 16px; top: 16px; z-index: 100;
+  width: auto; height: auto; padding: 8px 16px; margin: 0;
+  clip: auto; white-space: normal;
+  background: rgb(var(--accent)); color: rgb(var(--accent-fg));
+  border-radius: 8px; font-size: 14px;
+}
+
+/* ---- Print (certificates / ID cards) ---- */
+@media print {
+  html, body { background: white !important; color: black !important; }
+  .no-print { display: none !important; }
+}

@@ -1,0 +1,22 @@
+// 8px spacing system (4px half-steps). Values are rem strings usable directly
+// in inline styles; in JSX prefer Tailwind spacing utilities (p-4 = 1rem, etc.),
+// which map to the same scale.
+export const spacing = {
+  0: "0",
+  0.5: "0.125rem", // 2
+  1: "0.25rem", // 4
+  2: "0.5rem", // 8  ← base unit
+  3: "0.75rem", // 12
+  4: "1rem", // 16
+  5: "1.25rem", // 20
+  6: "1.5rem", // 24
+  8: "2rem", // 32
+  10: "2.5rem", // 40
+  12: "3rem", // 48
+  16: "4rem", // 64
+  20: "5rem", // 80
+  24: "6rem", // 96
+} as const;
+
+export type SpacingKey = keyof typeof spacing;
+export const BASE_UNIT = 8; // px — every gap/pad should be a multiple of this
