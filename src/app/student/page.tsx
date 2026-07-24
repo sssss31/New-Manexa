@@ -28,13 +28,15 @@ export default async function StudentHome() {
       take: 6,
     }),
     prisma.exam.findMany({
-      where: { classId: student.classId, scheduledAt: { gte: new Date() } },
+      where: { tenantId: user.tenantId!, classId: student.classId, scheduledAt: { gte: new Date() } },
       orderBy: { scheduledAt: "asc" },
       include: { subject: true },
       take: 5,
     }),
     prisma.assignment.findMany({
       where: {
+        // Tenant-scoped via the course — prevents cross-tenant assignment leakage.
+        course: { tenantId: user.tenantId! },
         dueAt: { gte: new Date() },
         submissions: { none: { studentId: student.id } },
       },

@@ -22,6 +22,10 @@ const schema = z.object({
   // Session signing / cookie secret. Weak secrets are rejected in production.
   SESSION_SECRET: z.string().min(16, "SESSION_SECRET must be at least 16 characters"),
 
+  // Direct (non-pooled) connection used only by Prisma migrations. Optional —
+  // falls back to DATABASE_URL for local/non-serverless setups.
+  DIRECT_URL: z.string().url().optional(),
+
   // Optional dedicated biometric-template key; falls back to SESSION_SECRET.
   FACE_ENC_KEY: z.string().min(16).optional(),
 
@@ -57,7 +61,17 @@ function load() {
     // Hard-fail only when actually serving in production; warn otherwise.
     if (process.env.NODE_ENV === "production" && !isBuildPhase) throw new Error(msg);
     console.warn(`⚠️  ${msg}`);
-    return schema.parse({ ...process.env, SESSION_SECRET: process.env.SESSION_SECRET ?? "dev-insecure-secret-change" });
+    // Build/dev fallback: supply safe placeholders so `next build` never crashes
+    // on missing secrets (real values are enforced at runtime above). Dynamic
+    // pages don't query the DB at build time, so a placeholder URL is harmless.
+    return schema.parse({
+      ...process.env,
+      DATABASE_URL:
+        process.env.DATABASE_URL && /^postgres/.test(process.env.DATABASE_URL)
+          ? process.env.DATABASE_URL
+          : "postgresql://placeholder:placeholder@localhost:5432/placeholder",
+      SESSION_SECRET: process.env.SESSION_SECRET ?? "build-placeholder-secret-000",
+    });
   }
   // Block the placeholder secret from a running production server (not the build).
   if (

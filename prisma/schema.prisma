@@ -7,8 +7,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Runtime uses the pooled URL (serverless-safe). Migrations use the direct
+  // connection. DIRECT_URL falls back to DATABASE_URL when not split (local dev).
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // =========================
