@@ -3,6 +3,8 @@ import { guard, json } from "@/lib/face/api-guard";
 import { resolveUnknown } from "@/lib/face/engine";
 import { prisma } from "@/lib/prisma";
 
+export const runtime = "nodejs";
+
 // GET /api/face/unknown — list unresolved unknown faces
 export async function GET(req: Request) {
   const g = await guard(req, { roles: ["INSTITUTION_ADMIN", "PRINCIPAL", "TEACHER"], bucket: "unknown", limit: 120 });

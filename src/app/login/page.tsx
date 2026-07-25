@@ -69,6 +69,12 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           {sp.err === "pending" && (
             <div className="badge badge-warning w-full py-2 justify-center text-center">Your account is awaiting admin approval</div>
           )}
+          {sp.err === "dbdown" && (
+            <div className="badge badge-error w-full py-2 justify-center text-center">Service temporarily unavailable — please try again shortly.</div>
+          )}
+          {sp.err === "server" && (
+            <div className="badge badge-error w-full py-2 justify-center text-center">Something went wrong signing in. Please try again.</div>
+          )}
           {sp.notice && (
             <div className="badge badge-accent w-full py-2 justify-center text-center">{decodeURIComponent(sp.notice)}</div>
           )}

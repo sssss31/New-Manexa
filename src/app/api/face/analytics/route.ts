@@ -1,6 +1,8 @@
 import { guard, json } from "@/lib/face/api-guard";
 import { prisma } from "@/lib/prisma";
 
+export const runtime = "nodejs";
+
 // GET /api/face/analytics — dashboard rollups for the tenant
 export async function GET(req: Request) {
   const g = await guard(req, { roles: ["INSTITUTION_ADMIN", "PRINCIPAL", "TEACHER"], bucket: "analytics", limit: 120 });

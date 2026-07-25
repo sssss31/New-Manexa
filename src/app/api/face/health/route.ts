@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 
+export const runtime = "nodejs";
+
 // Liveness/readiness for the face subsystem: DB + engine reachability.
 export async function GET() {
   const started = Date.now();

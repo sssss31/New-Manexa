@@ -7,6 +7,7 @@ import { createSession, roleHome, validatePassword } from "@/lib/auth";
 import { createInstitution, joinInstitution } from "@/lib/tenancy";
 import { rateLimit } from "@/lib/rate-limit";
 import { prisma } from "@/lib/prisma";
+import { logger, isNextControlFlowError, isDbConnectionError } from "@/lib/logger";
 
 async function clientMeta() {
   const h = await headers();
@@ -66,13 +67,27 @@ export async function createInstitutionAction(formData: FormData) {
     });
     ownerId = owner.id;
     home = roleHome(owner.role);
-  } catch (e: any) {
-    redirect(`/signup?tab=create&err=${encodeURIComponent(e.message ?? "Could not create institution")}`);
+  } catch (e) {
+    if (isNextControlFlowError(e)) throw e;
+    if (isDbConnectionError(e)) {
+      logger.error("createInstitution failed: database unreachable", e, { route: "createInstitutionAction", email: d.ownerEmail });
+      redirect(`/signup?tab=create&err=${encodeURIComponent("Service temporarily unavailable — please try again shortly.")}`);
+    }
+    // Domain errors from lib/tenancy carry user-safe messages (e.g. email taken).
+    logger.warn("createInstitution rejected", { route: "createInstitutionAction", reason: (e as Error)?.message });
+    redirect(`/signup?tab=create&err=${encodeURIComponent((e as Error)?.message ?? "Could not create institution")}`);
   }
 
-  const meta = await clientMeta();
-  await prisma.loginEvent.create({ data: { userId: ownerId, ...meta, outcome: "SUCCESS" } });
-  await createSession(ownerId);
+  try {
+    const meta = await clientMeta();
+    await prisma.loginEvent.create({ data: { userId: ownerId, ...meta, outcome: "SUCCESS" } });
+    await createSession(ownerId);
+  } catch (e) {
+    if (isNextControlFlowError(e)) throw e;
+    logger.error("post-signup session creation failed", e, { route: "createInstitutionAction", userId: ownerId });
+    // Institution was created; ask them to sign in manually.
+    redirect(`/login?notice=${encodeURIComponent("Institution created — please sign in.")}`);
+  }
   redirect(home);
 }
 
@@ -106,8 +121,14 @@ export async function joinInstitutionAction(formData: FormData) {
       password: d.password,
       role: d.role,
     });
-  } catch (e: any) {
-    redirect(`/signup?tab=join&err=${encodeURIComponent(e.message ?? "Could not join institution")}`);
+  } catch (e) {
+    if (isNextControlFlowError(e)) throw e;
+    if (isDbConnectionError(e)) {
+      logger.error("joinInstitution failed: database unreachable", e, { route: "joinInstitutionAction", institutionId: d.institutionId });
+      redirect(`/signup?tab=join&err=${encodeURIComponent("Service temporarily unavailable — please try again shortly.")}`);
+    }
+    logger.warn("joinInstitution rejected", { route: "joinInstitutionAction", reason: (e as Error)?.message });
+    redirect(`/signup?tab=join&err=${encodeURIComponent((e as Error)?.message ?? "Could not join institution")}`);
   }
   // Joins require admin approval, so send them to sign-in with a notice.
   redirect(`/login?notice=${encodeURIComponent("Request submitted — an institution admin will approve your account, then you can sign in.")}`);

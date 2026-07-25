@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 
+export const runtime = "nodejs";
+
 const startedAt = Date.now();
 
 // Liveness + readiness for the k8s probes in k8s/manexa.yaml.

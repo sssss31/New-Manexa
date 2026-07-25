@@ -2,6 +2,8 @@ import { z } from "zod";
 import { guard, json } from "@/lib/face/api-guard";
 import { recognize } from "@/lib/face/engine";
 
+export const runtime = "nodejs";
+
 const Body = z.object({
   sessionId: z.string().min(1),
   descriptor: z.array(z.number()).min(64).max(1024),

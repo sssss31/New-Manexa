@@ -3,6 +3,8 @@ import { guard, json } from "@/lib/face/api-guard";
 import { enrollSample } from "@/lib/face/engine";
 import { POSES } from "@/lib/face/descriptor";
 
+export const runtime = "nodejs";
+
 const Body = z.object({
   subjectType: z.enum(["STUDENT", "STAFF"]),
   subjectId: z.string().min(1),

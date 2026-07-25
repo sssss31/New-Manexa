@@ -3,6 +3,8 @@ import { guard, json } from "@/lib/face/api-guard";
 import { startSession, stopSession } from "@/lib/face/engine";
 import { prisma } from "@/lib/prisma";
 
+export const runtime = "nodejs";
+
 const StartBody = z.object({
   classId: z.string().min(1),
   sectionId: z.string().min(1),
