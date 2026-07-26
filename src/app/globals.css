@@ -215,3 +215,116 @@ h1, h2, h3 {
   html, body { background: white !important; color: black !important; }
   .no-print { display: none !important; }
 }
+
+/* ============================================================
+   MARKETING SITE — premium SaaS surface (public landing only).
+   Brand neon-green on black + subtle emerald/mint/cyan aurora.
+   ============================================================ */
+
+.mkt-gradient-text {
+  background: linear-gradient(100deg, #fff 0%, #fff 40%, rgb(var(--accent)) 75%, #9be36a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Aurora orbs — soft glowing color blobs behind sections */
+.mkt-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.5;
+  pointer-events: none;
+  will-change: transform;
+}
+.mkt-orb-green  { background: radial-gradient(circle at 30% 30%, rgba(182,255,42,0.55), transparent 70%); }
+.mkt-orb-emerald{ background: radial-gradient(circle at 30% 30%, rgba(52,211,153,0.40), transparent 70%); }
+.mkt-orb-cyan   { background: radial-gradient(circle at 30% 30%, rgba(34,211,238,0.28), transparent 70%); }
+
+@keyframes mkt-float {
+  0%,100% { transform: translateY(0) translateX(0); }
+  50%     { transform: translateY(-18px) translateX(8px); }
+}
+@keyframes mkt-float-slow {
+  0%,100% { transform: translateY(0); }
+  50%     { transform: translateY(-10px); }
+}
+@keyframes mkt-drift {
+  0%   { transform: translate(0,0) scale(1); }
+  50%  { transform: translate(30px,-20px) scale(1.08); }
+  100% { transform: translate(0,0) scale(1); }
+}
+.mkt-float      { animation: mkt-float 7s ease-in-out infinite; }
+.mkt-float-slow { animation: mkt-float-slow 5s ease-in-out infinite; }
+.mkt-drift      { animation: mkt-drift 16s ease-in-out infinite; }
+
+/* Grid background + radial fade mask */
+.mkt-grid {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+
+/* Subtle noise texture (data-uri, no request) */
+.mkt-noise::before {
+  content: "";
+  position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  opacity: 0.025; pointer-events: none; mix-blend-mode: overlay;
+}
+
+/* Glass surfaces */
+.mkt-glass {
+  background: rgba(20, 22, 18, 0.55);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.mkt-glass-strong {
+  background: rgba(10, 12, 8, 0.72);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+
+/* Card with a soft glowing gradient border on hover */
+.mkt-card {
+  position: relative;
+  background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 20px;
+  transition: transform 0.35s cubic-bezier(0.21,1,0.36,1), border-color 0.35s, box-shadow 0.35s;
+}
+.mkt-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(182,255,42,0.35);
+  box-shadow: 0 20px 60px -24px rgba(0,0,0,0.8), 0 0 40px -20px rgba(182,255,42,0.45);
+}
+
+/* Neon primary button with glow */
+.mkt-btn-primary {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  padding: 0.75rem 1.4rem; border-radius: 9999px; font-weight: 600; font-size: 0.95rem;
+  color: #0a0f04; background: rgb(var(--accent));
+  box-shadow: 0 0 0 1px rgba(182,255,42,0.4), 0 10px 40px -10px rgba(182,255,42,0.55);
+  transition: transform 0.2s, box-shadow 0.3s;
+}
+.mkt-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px rgba(182,255,42,0.6), 0 16px 50px -8px rgba(182,255,42,0.7); }
+.mkt-btn-primary:active { transform: translateY(0); }
+
+.mkt-btn-ghost {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  padding: 0.75rem 1.3rem; border-radius: 9999px; font-weight: 500; font-size: 0.95rem;
+  color: #fff; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+  transition: background 0.2s, border-color 0.2s;
+}
+.mkt-btn-ghost:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.22); }
+
+.mkt-chip {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.35rem 0.8rem; border-radius: 9999px; font-size: 0.8rem;
+  background: rgba(182,255,42,0.08); border: 1px solid rgba(182,255,42,0.25); color: rgb(var(--accent));
+}

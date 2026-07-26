@@ -61,16 +61,22 @@ function load() {
     // Hard-fail only when actually serving in production; warn otherwise.
     if (process.env.NODE_ENV === "production" && !isBuildPhase) throw new Error(msg);
     console.warn(`⚠️  ${msg}`);
-    // Build/dev fallback: supply safe placeholders so `next build` never crashes
-    // on missing secrets (real values are enforced at runtime above). Dynamic
-    // pages don't query the DB at build time, so a placeholder URL is harmless.
+    // Build/dev fallback that NEVER throws: drop any invalid keys (a bad optional
+    // must not break the build), then placeholder the two required secrets.
+    // Real values are still enforced at runtime in production (the throw above).
+    const invalid = new Set(parsed.error.issues.map((i) => String(i.path[0])));
+    const sanitized: Record<string, unknown> = { ...process.env };
+    for (const key of invalid) delete sanitized[key];
     return schema.parse({
-      ...process.env,
+      ...sanitized,
       DATABASE_URL:
-        process.env.DATABASE_URL && /^postgres/.test(process.env.DATABASE_URL)
+        typeof process.env.DATABASE_URL === "string" && /^postgres/.test(process.env.DATABASE_URL)
           ? process.env.DATABASE_URL
           : "postgresql://placeholder:placeholder@localhost:5432/placeholder",
-      SESSION_SECRET: process.env.SESSION_SECRET ?? "build-placeholder-secret-000",
+      SESSION_SECRET:
+        typeof process.env.SESSION_SECRET === "string" && process.env.SESSION_SECRET.length >= 16
+          ? process.env.SESSION_SECRET
+          : "build-placeholder-secret-000",
     });
   }
   // Block the placeholder secret from a running production server (not the build).
