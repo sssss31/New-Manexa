@@ -1,8 +1,15 @@
 import Link from "next/link";
+import {
+  Users, GraduationCap, Wallet, IndianRupee, CalendarCheck, UserPlus, ClipboardList,
+  Megaphone, Activity, Sparkles, ArrowUpRight, TrendingUp, BellRing, Plus,
+} from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth";
-import { PageHeader, ProgressBar, SectionCard, Stat, StatusBadge, Tag } from "@/components/ui";
+import { StatusBadge, Tag } from "@/components/ui";
 import { AreaChart, BarChart, DonutChart } from "@/components/Charts";
+import { KpiCard } from "@/components/dashboard/KpiCard";
+import { Panel } from "@/components/dashboard/Panel";
+import { Reveal, RevealGroup, RevealItem } from "@/components/marketing/Reveal";
 import { inr, relative, dateShort } from "@/lib/format";
 import { normalizeDate } from "@/lib/engine";
 
@@ -76,111 +83,177 @@ export default async function InstitutionCockpit() {
   }));
   const classBars = classStrength.map((c) => ({ label: c.name.replace(/^(Class|Grade|Batch|Year)\s*/i, ""), value: c._count.students }));
 
+  const quickActions = [
+    { href: "/institution/students", label: "Students", icon: Users },
+    { href: "/institution/leads", label: "Admissions", icon: UserPlus },
+    { href: "/institution/fees", label: "Fees", icon: Wallet },
+    { href: "/institution/exams", label: "Exams", icon: ClipboardList },
+    { href: "/institution/assistant", label: "AI Assistant", icon: Sparkles },
+    { href: "/institution/notices", label: "Notices", icon: Megaphone },
+  ];
+
   return (
-    <>
-      <PageHeader
-        title={`Good ${greeting()}, ${user.displayName.split(" ")[0]}`}
-        sub="Live cockpit for the institution — everything you need to run the day."
-        actions={
-          <>
-            <Link href="/institution/leads" className="btn-secondary">Leads</Link>
-            <Link href="/institution/notices" className="btn-primary">+ New notice</Link>
-          </>
-        }
-      />
+    <div className="relative">
+      {/* Subtle aurora canvas */}
+      <div className="dash-orb dash-orb-green w-[420px] h-[420px] -top-24 -left-24" aria-hidden />
+      <div className="dash-orb dash-orb-navy w-[380px] h-[380px] top-40 right-[-120px]" aria-hidden />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        <Stat label="Students" value={students.toLocaleString()} sub={`${classes} classes`} tone="accent" />
-        <Stat label="Staff" value={staff.toLocaleString()} />
-        <Stat label="Open leads" value={leadsOpen} sub="Active pipeline" tone="warning" />
-        <Stat label="Fee due" value={inr(invoicesDue._sum.total ?? 0)} sub={`${invoicesDue._count ?? 0} invoices`} tone="error" />
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        <div className="card p-4">
-          <div className="stat-label">Attendance today</div>
-          <div className="stat-value">{attendancePct}%</div>
-          <div className="mt-2"><ProgressBar value={attendancePct} tone={attendancePct >= 90 ? "success" : "warning"} /></div>
-          <div className="stat-sub mt-2">{presentToday} present · {absentToday} absent · {totalMarked} marked</div>
+      {/* Header */}
+      <Reveal className="relative z-[1] flex flex-wrap items-end justify-between gap-4 mb-7">
+        <div>
+          <div className="mkt-chip mb-3 !text-xs"><span className="dot" /> {user.tenantId ? "Live cockpit" : ""}</div>
+          <h1 className="text-3xl md:text-4xl font-semibold tracking-tight font-display">
+            Good {greeting()}, <span className="mkt-gradient-text">{user.displayName.split(" ")[0]}</span>
+          </h1>
+          <p className="text-sm text-muted mt-1.5">Everything you need to run the day, at a glance.</p>
         </div>
-        <Stat label="Collected · this month" value={inr(collectedThisMonth._sum.amount ?? 0)} tone="success" />
-        <Stat label="Upcoming exams" value={upcomingExams.length} />
-        <Stat label="Notices posted" value={recentNotices.length} sub="Last 5" />
-      </div>
+        <div className="flex items-center gap-2">
+          <Link href="/institution/leads" className="btn-secondary">Leads</Link>
+          <Link href="/institution/notices" className="btn-primary gap-1.5"><Plus size={15} /> New notice</Link>
+        </div>
+      </Reveal>
 
-      {/* Visual analytics row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        <SectionCard title="Attendance trend" right={<span className="text-xs text-muted">last 10 days · %</span>} className="lg:col-span-2">
+      {/* KPI grid */}
+      <RevealGroup className="relative z-[1] grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+        <RevealItem><KpiCard icon={<Users size={18} />} label="Students" value={students.toLocaleString()} sub={`${classes} classes`} tone="accent" accentBar /></RevealItem>
+        <RevealItem><KpiCard icon={<GraduationCap size={18} />} label="Staff" value={staff.toLocaleString()} sub="Teaching & admin" /></RevealItem>
+        <RevealItem><KpiCard icon={<Wallet size={18} />} label="Fee due" value={inr(invoicesDue._sum.total ?? 0)} sub={`${invoicesDue._count ?? 0} invoices`} tone="error" /></RevealItem>
+        <RevealItem><KpiCard icon={<IndianRupee size={18} />} label="Collected · month" value={inr(collectedThisMonth._sum.amount ?? 0)} tone="success" /></RevealItem>
+      </RevealGroup>
+      <RevealGroup className="relative z-[1] grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+        <RevealItem><KpiCard icon={<CalendarCheck size={18} />} label="Attendance today" value={`${attendancePct}%`} sub={`${presentToday} present · ${absentToday} absent`} tone={attendancePct >= 90 ? "success" : attendancePct > 0 ? "warning" : "default"} /></RevealItem>
+        <RevealItem><KpiCard icon={<UserPlus size={18} />} label="Open leads" value={leadsOpen} sub="Active pipeline" tone="warning" /></RevealItem>
+        <RevealItem><KpiCard icon={<ClipboardList size={18} />} label="Upcoming exams" value={upcomingExams.length} sub="Scheduled" /></RevealItem>
+        <RevealItem><KpiCard icon={<Megaphone size={18} />} label="Notices" value={recentNotices.length} sub="Recent" /></RevealItem>
+      </RevealGroup>
+
+      {/* Analytics */}
+      <Reveal className="relative z-[1] grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <Panel title="Attendance trend" icon={<TrendingUp size={15} />} right="last 10 days · %" className="lg:col-span-2">
           {attData.length > 1 ? (
             <AreaChart data={attData} labels={attLabels} suffix="%" />
           ) : (
-            <div className="text-sm text-muted py-8 text-center">Not enough attendance data yet.</div>
+            <EmptyMini icon={<CalendarCheck size={22} />} text="Not enough attendance data yet." />
           )}
-        </SectionCard>
-        <SectionCard title="Fee mix" right={<span className="text-xs text-muted">₹ thousands</span>}>
+        </Panel>
+        <Panel title="Fee mix" icon={<Wallet size={15} />} right="₹ thousands">
           {feeSeg.some((s) => s.value > 0) ? (
-            <DonutChart
-              segments={feeSeg}
-              centerLabel={`${feeSeg.reduce((s, x) => s + x.value, 0)}k`}
-              centerSub="invoiced"
-            />
+            <DonutChart segments={feeSeg} centerLabel={`${feeSeg.reduce((s, x) => s + x.value, 0)}k`} centerSub="invoiced" />
           ) : (
-            <div className="text-sm text-muted py-8 text-center">No invoices yet.</div>
+            <EmptyMini icon={<Wallet size={22} />} text="No invoices yet." />
           )}
-        </SectionCard>
-      </div>
-      <SectionCard title="Class strength" right={<span className="text-xs text-muted">students per class</span>} className="mb-4">
-        {classBars.length ? <BarChart data={classBars} /> : <div className="text-sm text-muted">No classes yet.</div>}
-      </SectionCard>
+        </Panel>
+      </Reveal>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <SectionCard title="Upcoming exams" className="lg:col-span-2">
-          {upcomingExams.length === 0 && <div className="text-sm text-muted">No exams scheduled.</div>}
-          <ul className="space-y-2">
-            {upcomingExams.map((e) => (
-              <li key={e.id} className="flex items-center justify-between border-b border-border pb-2 last:border-0">
-                <div>
-                  <div className="text-fg font-medium">{e.title}</div>
-                  <div className="text-xs text-muted">{e.class.name} · {e.subject.name} · {e.type}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm text-fg">{dateShort(e.scheduledAt)}</div>
-                  <StatusBadge status={e.status} />
-                </div>
-              </li>
-            ))}
-          </ul>
-        </SectionCard>
+      <Reveal className="relative z-[1] mb-4">
+        <Panel title="Class strength" icon={<Users size={15} />} right="students per class">
+          {classBars.length ? <BarChart data={classBars} /> : <EmptyMini icon={<Users size={22} />} text="No classes yet." />}
+        </Panel>
+      </Reveal>
 
-        <SectionCard title="Recent notices">
-          {recentNotices.length === 0 && <div className="text-sm text-muted">No notices yet.</div>}
-          <ul className="space-y-2">
-            {recentNotices.map((n) => (
-              <li key={n.id} className="pb-2 border-b border-border last:border-0">
-                <div className="text-sm text-fg">{n.title}</div>
-                <div className="text-xs text-muted flex items-center gap-2">
-                  <Tag>{n.audience}</Tag>
-                  {relative(n.publishedAt)}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </SectionCard>
-      </div>
-
-      <SectionCard title="Recent activity" className="mt-4">
-        <ul className="space-y-2">
-          {recentAudit.map((a) => (
-            <li key={a.id} className="flex items-baseline justify-between border-b border-border pb-1.5 last:border-0">
-              <div className="text-sm">
-                <span className="text-fg">{a.action.replace(/_/g, " ")}</span>
-                <span className="text-muted"> · {a.entity}{a.detail ? ` · ${a.detail}` : ""}</span>
-              </div>
-              <div className="text-xs text-muted">{a.actor?.displayName ?? "system"} · {relative(a.createdAt)}</div>
-            </li>
+      {/* Quick actions */}
+      <Reveal className="relative z-[1] mb-6">
+        <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+          {quickActions.map((a) => (
+            <Link key={a.href} href={a.href} className="glass-card glass-card-hover p-4 flex flex-col items-center justify-center gap-2 text-center group">
+              <span className="icon-chip group-hover:bg-accent/20 transition-colors"><a.icon size={18} /></span>
+              <span className="text-xs text-muted group-hover:text-fg transition-colors">{a.label}</span>
+            </Link>
           ))}
-        </ul>
-      </SectionCard>
-    </>
+        </div>
+      </Reveal>
+
+      {/* Detail grid */}
+      <div className="relative z-[1] grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Reveal className="lg:col-span-2">
+          <Panel title="Upcoming exams" icon={<ClipboardList size={15} />} right={<Link href="/institution/exams" className="text-accent hover:underline">All exams</Link>}>
+            {upcomingExams.length === 0 ? (
+              <EmptyMini icon={<ClipboardList size={22} />} text="No exams scheduled." />
+            ) : (
+              <ul className="space-y-1">
+                {upcomingExams.map((e) => (
+                  <li key={e.id} className="flex items-center justify-between rounded-xl px-3 py-2.5 hover:bg-white/[0.03] transition-colors">
+                    <div>
+                      <div className="text-fg font-medium text-sm">{e.title}</div>
+                      <div className="text-xs text-muted">{e.class.name} · {e.subject.name} · {e.type}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm text-fg tabular-nums">{dateShort(e.scheduledAt)}</div>
+                      <StatusBadge status={e.status} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </Reveal>
+
+        <Reveal delay={0.05}>
+          <Panel title="Recent notices" icon={<BellRing size={15} />} right={<Link href="/institution/notices" className="text-accent hover:underline">All</Link>}>
+            {recentNotices.length === 0 ? (
+              <EmptyMini icon={<Megaphone size={22} />} text="No notices yet." />
+            ) : (
+              <ul className="space-y-2.5">
+                {recentNotices.map((n) => (
+                  <li key={n.id} className="pb-2.5 border-b border-white/8 last:border-0 last:pb-0">
+                    <div className="text-sm text-fg">{n.title}</div>
+                    <div className="text-xs text-muted flex items-center gap-2 mt-1">
+                      <Tag>{n.audience}</Tag>
+                      {relative(n.publishedAt)}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </Reveal>
+      </div>
+
+      {/* AI insight teaser + Recent activity */}
+      <div className="relative z-[1] grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+        <Reveal>
+          <Panel title="AI insight" icon={<Sparkles size={15} />}>
+            <div className="flex flex-col h-full">
+              <p className="text-sm text-muted leading-relaxed">
+                Let the AI surface at-risk students, likely fee defaulters and attendance dips — computed live from your data.
+              </p>
+              <Link href="/institution/ai" className="btn-primary w-full justify-center mt-4 gap-1.5">
+                Open AI Insights <ArrowUpRight size={15} />
+              </Link>
+            </div>
+          </Panel>
+        </Reveal>
+
+        <Reveal delay={0.05} className="lg:col-span-2">
+          <Panel title="Recent activity" icon={<Activity size={15} />} right={<Link href="/institution/audit" className="text-accent hover:underline">Audit log</Link>}>
+            {recentAudit.length === 0 ? (
+              <EmptyMini icon={<Activity size={22} />} text="No activity yet." />
+            ) : (
+              <ul className="space-y-0.5">
+                {recentAudit.map((a) => (
+                  <li key={a.id} className="flex items-baseline justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-white/[0.03] transition-colors">
+                    <div className="text-sm min-w-0">
+                      <span className="text-fg">{a.action.replace(/_/g, " ")}</span>
+                      <span className="text-muted"> · {a.entity}{a.detail ? ` · ${a.detail}` : ""}</span>
+                    </div>
+                    <div className="text-xs text-subtle whitespace-nowrap">{a.actor?.displayName ?? "system"} · {relative(a.createdAt)}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </Reveal>
+      </div>
+    </div>
+  );
+}
+
+function EmptyMini({ icon, text }: { icon: React.ReactNode; text: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
+      <span className="w-11 h-11 rounded-xl bg-white/[0.04] border border-white/8 flex items-center justify-center text-subtle">{icon}</span>
+      <span className="text-sm text-muted">{text}</span>
+    </div>
   );
 }
 

@@ -16,6 +16,7 @@ const config: Config = {
         subtle: "rgb(var(--subtle) / <alpha-value>)",
         accent: "rgb(var(--accent) / <alpha-value>)",
         "accent-fg": "rgb(var(--accent-fg) / <alpha-value>)",
+        mint: "rgb(var(--mint) / <alpha-value>)",
         success: "rgb(var(--success) / <alpha-value>)",
         warning: "rgb(var(--warning) / <alpha-value>)",
         error: "rgb(var(--error) / <alpha-value>)",

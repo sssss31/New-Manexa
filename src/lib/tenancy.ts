@@ -31,14 +31,24 @@ export async function generateInstitutionId(
   tx: Prisma.TransactionClient = prisma
 ): Promise<string> {
   const prefix = PREFIX[type] ?? "ORG";
-  const counter = await tx.institutionCounter.upsert({
-    where: { type },
-    update: { next: { increment: 1 } },
-    create: { type, next: 2 }, // reserve 1 for this first caller
-  });
-  // On create the row is initialised to 2, so the first ID uses (next-1)=1.
-  const seq = counter.next - 1;
-  return `MAN-${prefix}-${ID_BASE + seq}`;
+  // Self-healing + race-safe: atomically advance the per-type counter, then
+  // verify the candidate ID is actually free. If the counter ever drifts behind
+  // existing data (missing counter, re-seed, manual insert), we keep advancing
+  // until we find a free ID — instead of blindly emitting a colliding one. The
+  // unique constraint on Tenant.institutionId remains the final safety net.
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const counter = await tx.institutionCounter.upsert({
+      where: { type },
+      update: { next: { increment: 1 } },
+      create: { type, next: 2 }, // create → next=2 so the first ID uses (next-1)=1
+    });
+    const seq = counter.next - 1;
+    const candidate = `MAN-${prefix}-${ID_BASE + seq}`;
+    const clash = await tx.tenant.findUnique({ where: { institutionId: candidate }, select: { id: true } });
+    if (!clash) return candidate;
+    // Candidate already exists → counter was behind. Loop advances it and retries.
+  }
+  throw new Error(`Could not allocate a unique institution ID for type ${type}`);
 }
 
 function slugify(name: string) {

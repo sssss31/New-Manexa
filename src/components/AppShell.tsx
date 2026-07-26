@@ -48,10 +48,16 @@ export async function AppShell({
     : 0;
 
   return (
-    <div className="min-h-screen flex bg-bg">
+    <div className="min-h-screen flex bg-bg relative">
+      {/* App-wide aurora canvas — very subtle, sits behind every screen */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden>
+        <div className="dash-orb dash-orb-green w-[600px] h-[600px] -top-48 -left-40" />
+        <div className="dash-orb dash-orb-navy w-[520px] h-[520px] top-1/3 right-[-160px]" />
+        <div className="dash-orb dash-orb-mint w-[420px] h-[420px] bottom-[-120px] left-1/3 opacity-[0.10]" />
+      </div>
       <a href="#main" className="sr-skip">Skip to content</a>
 
-      <aside className="w-64 shrink-0 border-r border-border bg-surface flex flex-col">
+      <aside className="w-64 shrink-0 border-r border-border bg-surface/70 backdrop-blur-xl flex flex-col relative z-10">
         <div className="p-4 border-b border-border">
           <Logo />
           {tenantName && (
@@ -105,8 +111,8 @@ export async function AppShell({
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-14 border-b border-border bg-surface/60 backdrop-blur px-6 flex items-center justify-between gap-3">
+      <main className="flex-1 flex flex-col min-w-0 relative z-10">
+        <header className="h-14 border-b border-border bg-surface/60 backdrop-blur-xl px-6 flex items-center justify-between gap-3">
           <div className="text-sm text-muted hidden lg:block">MANEXA · AI-Powered School Management</div>
           <div className="flex items-center gap-2 ml-auto">
             <CommandK items={commandItems} />
