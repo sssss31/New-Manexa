@@ -57,12 +57,28 @@ export function isNextControlFlowError(e: unknown): boolean {
   return typeof digest === "string" && (digest.startsWith("NEXT_REDIRECT") || digest === "NEXT_NOT_FOUND");
 }
 
-// Detect a database connectivity failure (Prisma) so we can surface a targeted,
-// actionable message. P1001 = can't reach DB server (the classic Vercel↔Supabase
-// direct-connection / IPv6 issue); P1017 = server closed the connection.
+// Connection-error Prisma codes. P1000 auth failed · P1001 can't reach server
+// (the Vercel↔Supabase direct/IPv6 issue) · P1002 timed out · P1010 access denied
+// · P1011 TLS error · P1013 bad connection string · P1017 server closed conn ·
+// P2024 pool timeout.
+const DB_CONN_CODES = ["P1000", "P1001", "P1002", "P1008", "P1010", "P1011", "P1013", "P1017", "P2024"];
+
+/** The Prisma error code from either a known-request error (.code) or an
+ *  initialization error (.errorCode) — cold starts throw the latter. */
+export function prismaErrorCode(e: unknown): string | undefined {
+  const err = e as { code?: string; errorCode?: string };
+  return err?.code ?? err?.errorCode;
+}
+
+// Detect a DB connectivity failure across BOTH Prisma error shapes:
+//  - PrismaClientKnownRequestError → `.code`   (warm instance, query-time)
+//  - PrismaClientInitializationError → `.errorCode` (cold start, can't connect)
+// Handling both is why err=dbdown vs err=server was intermittent before.
 export function isDbConnectionError(e: unknown): boolean {
-  const code = (e as { code?: string })?.code;
-  if (code && ["P1000", "P1001", "P1002", "P1008", "P1017", "P2024"].includes(code)) return true;
+  const code = prismaErrorCode(e);
+  if (code && DB_CONN_CODES.includes(code)) return true;
+  const name = (e as { name?: string })?.name ?? (e as object)?.constructor?.name;
+  if (name === "PrismaClientInitializationError") return true;
   const msg = (e as Error)?.message ?? "";
-  return /can't reach database server|connection pool|ECONNREFUSED|ETIMEDOUT|ENOTFOUND/i.test(msg);
+  return /can't reach database server|connection pool|timed out|connection.*closed|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|self.signed|SSL|TLS/i.test(msg);
 }
