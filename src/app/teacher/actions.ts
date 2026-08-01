@@ -2,11 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireRole } from "@/lib/auth";
+import { requireRole, requirePermission } from "@/lib/auth";
 import { enterMarks, gradeSubmission, markAttendance, parseLocalDT, publishCourse, publishExam } from "@/lib/engine";
 import { audit } from "@/lib/audit";
 
-async function actor() {
+async function actor(permission?: string) {
+  if (permission) return requirePermission(permission, "TEACHER");
   return requireRole("TEACHER");
 }
 
@@ -20,7 +21,7 @@ async function ownedCourse(tenantId: string, courseId: string) {
 }
 
 export async function markAttendanceAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("attendance.mark");
   const sectionId = String(formData.get("sectionId"));
   // Tenant-scoped + active-only: an unscoped sectionId used to pull another
   // institution's roster, and withdrawn students were getting marked PRESENT.
@@ -37,7 +38,7 @@ export async function markAttendanceAction(formData: FormData) {
 }
 
 export async function createCourseAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("lms.manage");
   const subjectId = String(formData.get("subjectId"));
   // Tenant guard on the foreign key.
   const subject = await prisma.subject.findFirst({ where: { id: subjectId, tenantId: a.tenantId! }, select: { id: true } });
@@ -56,7 +57,7 @@ export async function createCourseAction(formData: FormData) {
 }
 
 export async function addLessonAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("lms.manage");
   const courseId = String(formData.get("courseId"));
   await ownedCourse(a.tenantId!, courseId);
   const order = (await prisma.lesson.count({ where: { courseId } })) + 1;
@@ -74,13 +75,13 @@ export async function addLessonAction(formData: FormData) {
 }
 
 export async function publishCourseAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("lms.manage");
   await publishCourse({ tenantId: a.tenantId!, actorId: a.id, courseId: String(formData.get("courseId")) });
   revalidatePath("/teacher/courses");
 }
 
 export async function createAssignmentAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("homework.manage");
   const courseId = String(formData.get("courseId"));
   await ownedCourse(a.tenantId!, courseId);
   // datetime-local posts a bare local time — parse as IST, reject garbage.
@@ -100,7 +101,7 @@ export async function createAssignmentAction(formData: FormData) {
 }
 
 export async function gradeAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("homework.manage");
   await gradeSubmission({
     tenantId: a.tenantId!,
     actorId: a.id,
@@ -112,7 +113,7 @@ export async function gradeAction(formData: FormData) {
 }
 
 export async function createExamAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("exam.manage");
   const classId = String(formData.get("classId"));
   const subjectId = String(formData.get("subjectId"));
   // Tenant guards on both foreign keys — an exam created against another
@@ -140,7 +141,7 @@ export async function createExamAction(formData: FormData) {
 }
 
 export async function enterMarksAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("exam.manage");
   const examId = String(formData.get("examId"));
   // Tenant-scoped exam + roster (both were unscoped → cross-tenant mark writes).
   const exam = await prisma.exam.findFirst({ where: { id: examId, tenantId: a.tenantId! } });
@@ -160,7 +161,7 @@ export async function enterMarksAction(formData: FormData) {
 }
 
 export async function publishExamAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("result.publish");
   await publishExam({ tenantId: a.tenantId!, actorId: a.id, examId: String(formData.get("examId")) });
   revalidatePath("/teacher/exams");
 }

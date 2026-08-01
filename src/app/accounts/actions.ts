@@ -2,15 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireRole } from "@/lib/auth";
+import { requireRole, requirePermission } from "@/lib/auth";
 import { createInvoice, payInvoice, runPayroll, approvePayroll, disbursePayroll } from "@/lib/engine";
 
-async function actor() {
+async function actor(permission?: string) {
+  if (permission) return requirePermission(permission, ["ACCOUNTANT", "INSTITUTION_ADMIN"]);
   return requireRole(["ACCOUNTANT", "INSTITUTION_ADMIN"]);
 }
 
 export async function generateMonthlyInvoicesAction() {
-  const a = await actor();
+  const a = await actor("fee.manage");
   const students = await prisma.student.findMany({
     where: { tenantId: a.tenantId!, status: "ACTIVE" },
   });
@@ -40,7 +41,7 @@ export async function generateMonthlyInvoicesAction() {
 }
 
 export async function payInvoiceAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("fee.manage");
   await payInvoice({
     tenantId: a.tenantId!,
     invoiceId: String(formData.get("invoiceId")),
@@ -53,17 +54,17 @@ export async function payInvoiceAction(formData: FormData) {
 }
 
 export async function runPayrollAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("payroll.manage");
   await runPayroll({ tenantId: a.tenantId!, actorId: a.id, period: String(formData.get("period")) });
   revalidatePath("/accounts/payroll");
 }
 export async function approvePayrollAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("payroll.manage");
   await approvePayroll({ tenantId: a.tenantId!, actorId: a.id, runId: String(formData.get("runId")) });
   revalidatePath("/accounts/payroll");
 }
 export async function disbursePayrollAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("payroll.manage");
   await disbursePayroll({ tenantId: a.tenantId!, actorId: a.id, runId: String(formData.get("runId")) });
   revalidatePath("/accounts/payroll");
 }

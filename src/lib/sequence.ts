@@ -19,29 +19,26 @@ export async function nextSequence(
   seed: () => Promise<number>,
   db: Db = prisma
 ): Promise<number> {
-  for (let attempt = 0; attempt < 6; attempt++) {
+  const where = { tenantId_name: { tenantId, name } };
+
+  // 1) Ensure the counter row exists, seeded to one past the current max/count.
+  //    Idempotent upsert; retried because a concurrent first-insert can P2002.
+  for (let attempt = 0; ; attempt++) {
     try {
-      // Fast path: row exists → atomic increment (concurrent increments
-      // serialize on the row and each caller gets a distinct value).
-      const updated = await db.sequenceCounter.update({
-        where: { tenantId_name: { tenantId, name } },
-        data: { next: { increment: 1 } },
+      await db.sequenceCounter.upsert({
+        where,
+        update: {}, // no-op if it already exists
+        create: { tenantId, name, next: (await seed()) + 1 },
       });
-      return updated.next - 1;
+      break;
     } catch (e) {
-      const code = (e as { code?: string }).code;
-      if (code !== "P2025") throw e; // not "record not found" → real error
-      // No counter yet — seed it to one past the current max/count.
-      try {
-        const start = (await seed()) + 1;
-        await db.sequenceCounter.create({ data: { tenantId, name, next: start + 1 } });
-        return start;
-      } catch (e2) {
-        // Another request created it first → loop and take the increment path.
-        if ((e2 as { code?: string }).code === "P2002") continue;
-        throw e2;
-      }
+      if ((e as { code?: string }).code === "P2002" && attempt < 5) continue; // lost the create race → row now exists
+      throw e;
     }
   }
-  throw new Error(`Could not allocate sequence "${name}" for tenant ${tenantId}`);
+
+  // 2) Atomically claim the next value. Concurrent increments serialize on the
+  //    row, so every caller gets a distinct, gap-free number.
+  const updated = await db.sequenceCounter.update({ where, data: { next: { increment: 1 } } });
+  return updated.next - 1;
 }
