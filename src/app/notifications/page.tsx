@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser, roleHome } from "@/lib/auth";
 import { Logo } from "@/components/Logo";
 import { Tag } from "@/components/ui";
+import { PushToggle } from "@/components/PushToggle";
 import { relative } from "@/lib/format";
 import { markAllReadAction } from "./actions";
 
@@ -44,9 +45,12 @@ export default async function NotificationsPage() {
             <h1 className="text-2xl font-semibold text-fg">Notifications</h1>
             <p className="text-sm text-muted mt-1">Targeted alerts + broadcasts for your role</p>
           </div>
-          <form action={markAllReadAction}>
-            <button className="btn-primary text-xs">Mark all read</button>
-          </form>
+          <div className="flex items-center gap-3">
+            <PushToggle />
+            <form action={markAllReadAction}>
+              <button className="btn-primary text-xs">Mark all read</button>
+            </form>
+          </div>
         </div>
 
         {items.length === 0 && (

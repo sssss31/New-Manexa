@@ -5,9 +5,19 @@ import { z } from "zod";
 import { headers } from "next/headers";
 import { createSession, roleHome, validatePassword } from "@/lib/auth";
 import { createInstitution, joinInstitution } from "@/lib/tenancy";
-import { rateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { prisma } from "@/lib/prisma";
 import { logger, isNextControlFlowError, isDbConnectionError } from "@/lib/logger";
+
+// Error codes whose messages were written for end users (set by lib/tenancy).
+// Everything else (Prisma P-codes etc.) renders a generic message instead.
+const DOMAIN_CODES = new Set([
+  "EMAIL_TAKEN",
+  "INVALID_INSTITUTION",
+  "INSTITUTION_INACTIVE",
+  "SUBSCRIPTION_EXPIRED",
+  "SEAT_LIMIT",
+]);
 
 async function clientMeta() {
   const h = await headers();
@@ -46,7 +56,7 @@ export async function createInstitutionAction(formData: FormData) {
   const pwErr = validatePassword(d.password);
   if (pwErr) redirect(`/signup?tab=create&err=${encodeURIComponent(pwErr)}`);
 
-  if (!rateLimit(`signup:${d.ownerEmail.toLowerCase()}`, 5, 10 * 60_000)) {
+  if (!(await checkRateLimit(`signup:${d.ownerEmail.toLowerCase()}`, RATE_LIMITS.signup.limit, RATE_LIMITS.signup.windowMs, { durable: true }))) {
     redirect(`/signup?tab=create&err=${encodeURIComponent("Too many attempts — try again later")}`);
   }
 
@@ -73,9 +83,13 @@ export async function createInstitutionAction(formData: FormData) {
       logger.error("createInstitution failed: database unreachable", e, { route: "createInstitutionAction", email: d.ownerEmail });
       redirect(`/signup?tab=create&err=${encodeURIComponent("Service temporarily unavailable — please try again shortly.")}`);
     }
-    // Domain errors from lib/tenancy carry user-safe messages (e.g. email taken).
+    // Only DOMAIN errors (lib/tenancy sets .code) carry user-safe messages;
+    // anything else (raw Prisma text etc.) must never reach the user.
     logger.warn("createInstitution rejected", { route: "createInstitutionAction", reason: (e as Error)?.message });
-    redirect(`/signup?tab=create&err=${encodeURIComponent((e as Error)?.message ?? "Could not create institution")}`);
+    const safe = DOMAIN_CODES.has((e as { code?: string })?.code ?? "")
+      ? (e as Error).message
+      : "Could not create institution — please try again";
+    redirect(`/signup?tab=create&err=${encodeURIComponent(safe)}`);
   }
 
   try {
@@ -128,7 +142,10 @@ export async function joinInstitutionAction(formData: FormData) {
       redirect(`/signup?tab=join&err=${encodeURIComponent("Service temporarily unavailable — please try again shortly.")}`);
     }
     logger.warn("joinInstitution rejected", { route: "joinInstitutionAction", reason: (e as Error)?.message });
-    redirect(`/signup?tab=join&err=${encodeURIComponent((e as Error)?.message ?? "Could not join institution")}`);
+    const safe = DOMAIN_CODES.has((e as { code?: string })?.code ?? "")
+      ? (e as Error).message
+      : "Could not join institution — please try again";
+    redirect(`/signup?tab=join&err=${encodeURIComponent(safe)}`);
   }
   // Joins require admin approval, so send them to sign-in with a notice.
   redirect(`/login?notice=${encodeURIComponent("Request submitted — an institution admin will approve your account, then you can sign in.")}`);

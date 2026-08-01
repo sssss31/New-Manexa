@@ -6,6 +6,8 @@ import { prisma } from "./prisma";
 import { hashPassword } from "./auth";
 import { audit } from "./audit";
 import { ensurePermissionCatalog, seedTenantPermissions } from "./permissions";
+import { getBillingState } from "./billing";
+import { nextSequence } from "./sequence";
 import { Prisma } from "@prisma/client";
 
 export const INSTITUTION_TYPES = [
@@ -198,6 +200,26 @@ export async function joinInstitution(input: JoinInstitutionInput) {
     (err as any).code = "INSTITUTION_INACTIVE";
     throw err;
   }
+  // Block new joins once the subscription has lapsed past its grace window —
+  // a lapsed institution must renew before it can grow. (Read access for
+  // existing members is unaffected; this only gates new-member creation.)
+  const billing = await getBillingState(tenant.id);
+  if (!billing.writable) {
+    const err = new Error("This institution's subscription has expired. Ask your admin to renew before joining.");
+    (err as any).code = "SUBSCRIPTION_EXPIRED";
+    throw err;
+  }
+  // Staff-type joins consume a staff seat — without this check the join flow
+  // bypassed the plan's staff cap entirely.
+  const STAFF_JOIN_ROLES = new Set(["TEACHER", "HR", "LIBRARIAN", "TRANSPORT_MGR", "ACCOUNTANT"]);
+  if (STAFF_JOIN_ROLES.has(input.role)) {
+    const limit = billing.limits.staff;
+    if (limit !== null && billing.usage.staff >= limit) {
+      const err = new Error("This institution's staff seats are full. Ask your admin to upgrade the plan.");
+      (err as any).code = "SEAT_LIMIT";
+      throw err;
+    }
+  }
   const email = input.email.trim().toLowerCase();
   if (await prisma.user.findUnique({ where: { email } })) {
     const err = new Error("An account with this email already exists. Sign in instead.");
@@ -225,12 +247,17 @@ export async function joinInstitution(input: JoinInstitutionInput) {
     });
     // Attach the role-specific record so approval is the only remaining step.
     if (input.role === "TEACHER" || input.role === "HR" || input.role === "LIBRARIAN" || input.role === "TRANSPORT_MGR" || input.role === "ACCOUNTANT") {
-      const count = await tx.staff.count({ where: { tenantId: tenant.id } });
+      const seq = await nextSequence(
+        tenant.id,
+        "employee",
+        () => tx.staff.count({ where: { tenantId: tenant.id } }),
+        tx
+      );
       await tx.staff.create({
         data: {
           tenantId: tenant.id,
           userId: u.id,
-          employeeCode: `EMP-${String(count + 1).padStart(4, "0")}`,
+          employeeCode: `EMP-${String(seq).padStart(4, "0")}`,
           designation: input.role,
           department: input.role,
         },

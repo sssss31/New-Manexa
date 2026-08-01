@@ -3,7 +3,7 @@
 // to short-circuit.
 
 import { getCurrentUser, type Role } from "@/lib/auth";
-import { rateLimit } from "@/lib/rate-limit";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export interface FaceCtx {
   userId: string;
@@ -21,7 +21,7 @@ export async function guard(
   if (!user.tenantId) return { res: json({ error: "No tenant" }, 403) };
 
   const key = `face:${opts.bucket}:${user.id}`;
-  if (!rateLimit(key, opts.limit ?? 120, opts.windowMs ?? 60_000)) {
+  if (!(await checkRateLimit(key, opts.limit ?? 120, opts.windowMs ?? 60_000))) {
     return { res: json({ error: "Rate limit exceeded" }, 429) };
   }
   return { ctx: { userId: user.id, tenantId: user.tenantId, role: user.role } };

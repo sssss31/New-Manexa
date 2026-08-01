@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { prisma } from "@/lib/prisma";
 import { guard, json } from "@/lib/face/api-guard";
 import { enrollSample } from "@/lib/face/engine";
 import { POSES } from "@/lib/face/descriptor";
@@ -28,8 +29,19 @@ export async function POST(req: Request) {
   if (!parsed.success) return json({ error: "Invalid body", issues: parsed.error.flatten() }, 422);
 
   // A teacher may only enrol their own STAFF face; admins/principals enrol students.
-  if (g.ctx.role === "TEACHER" && parsed.data.subjectType === "STUDENT") {
-    return json({ error: "Teachers cannot enrol student faces" }, 403);
+  if (g.ctx.role === "TEACHER") {
+    if (parsed.data.subjectType === "STUDENT") {
+      return json({ error: "Teachers cannot enrol student faces" }, 403);
+    }
+    // The subjectId must be the caller's OWN staff record — without this a
+    // teacher could overwrite a colleague's biometric template with their face.
+    const own = await prisma.staff.findFirst({
+      where: { userId: g.ctx.userId, tenantId: g.ctx.tenantId },
+      select: { id: true },
+    });
+    if (!own || own.id !== parsed.data.subjectId) {
+      return json({ error: "Teachers can only enrol their own face" }, 403);
+    }
   }
   try {
     const result = await enrollSample({ tenantId: g.ctx.tenantId, actorId: g.ctx.userId, ...parsed.data });

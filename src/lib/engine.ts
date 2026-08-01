@@ -4,10 +4,23 @@
 // choreography synchronously and records it.
 
 import { prisma } from "./prisma";
+import { ownedOrThrow, TenantForbiddenError } from "./tenancy/guard";
+import { nextSequence } from "./sequence";
+import { assertSeat, assertActiveSubscription } from "./billing";
 import { audit } from "./audit";
 import { publish } from "./automation";
-import { hashPassword } from "./auth";
+import { hashPassword, provisionedPassword } from "./auth";
 import { notify } from "./notify";
+
+// Guard helper: every caller-supplied studentId must belong to the tenant.
+// Throws TENANT_FORBIDDEN if any id is foreign — prevents cross-tenant writes
+// through globally-unique upsert keys (Attendance, Mark, etc.).
+async function assertStudentsOwned(tenantId: string, studentIds: string[]) {
+  const unique = Array.from(new Set(studentIds));
+  if (unique.length === 0) return;
+  const owned = await prisma.student.count({ where: { id: { in: unique }, tenantId } });
+  if (owned !== unique.length) throw new TenantForbiddenError();
+}
 
 const YEAR = 2026;
 
@@ -114,14 +127,25 @@ export async function admitFromLead(input: {
   if (!lead) throw new Error("Lead not found");
   const tenant = await prisma.tenant.findUnique({ where: { id: input.tenantId } });
   if (!tenant) throw new Error("Tenant not found");
-  const cls = await prisma.class.findUnique({ where: { id: input.classId } });
-  const section = await prisma.section.findUnique({ where: { id: input.sectionId } });
+  // Billing gate: block if the plan's student seats are full or the
+  // subscription has lapsed past grace. Throws SeatLimitError / SubscriptionExpiredError.
+  await assertSeat(input.tenantId, "students");
+  // Tenant guard: the target class/section must belong to this tenant, else an
+  // admin could park students inside another institution's class rosters.
+  const cls = await prisma.class.findFirst({ where: { id: input.classId, tenantId: input.tenantId } });
+  const section = await prisma.section.findFirst({ where: { id: input.sectionId, tenantId: input.tenantId } });
   if (!cls || !section) throw new Error("Class/section not found");
 
   const admissionNo = await nextAdmissionNo(input.tenantId);
-  const parentEmail = lead.email ?? `${slug(lead.parentName)}@parent.${tenant.subdomain}.test`;
-  const studentEmail = `${slug(lead.studentName)}@student.${tenant.subdomain}.test`;
-  const pw = await hashPassword("password123");
+  // Student email is keyed on the admission number so two students with the
+  // same (or non-ASCII → empty-slug) name can never collide on User.email —
+  // a collision here used to crash admission with a P2002.
+  const admSlug = admissionNo.replace(/[^0-9a-z]+/gi, "-").toLowerCase();
+  const parentEmail =
+    lead.email ?? `${slug(lead.parentName) || `parent-${admSlug}`}@parent.${tenant.subdomain}.test`;
+  const studentEmail = `${slug(lead.studentName) || "student"}.${admSlug}@student.${tenant.subdomain}.test`;
+  // Random per-account password in production; the demo password only in demo mode.
+  const pw = await hashPassword(provisionedPassword());
 
   const parentUser = await prisma.user.upsert({
     where: { email: parentEmail },
@@ -162,7 +186,7 @@ export async function admitFromLead(input: {
       tenantId: input.tenantId,
       userId: studentUser.id,
       admissionNo,
-      rollNo: input.rollNo ?? String(await nextRollNo(input.sectionId)),
+      rollNo: input.rollNo ?? String(await nextRollNo(input.tenantId, input.sectionId)),
       classId: cls.id,
       sectionId: section.id,
       status: "ACTIVE",
@@ -203,12 +227,15 @@ export async function admitFromLead(input: {
 }
 
 async function nextAdmissionNo(tenantId: string) {
-  const count = await prisma.student.count({ where: { tenantId } });
-  return `${YEAR}/${String(count + 1).padStart(4, "0")}`;
+  const seq = await nextSequence(tenantId, "admission", () =>
+    prisma.student.count({ where: { tenantId } })
+  );
+  return `${YEAR}/${String(seq).padStart(4, "0")}`;
 }
-async function nextRollNo(sectionId: string) {
-  const count = await prisma.student.count({ where: { sectionId } });
-  return count + 1;
+async function nextRollNo(tenantId: string, sectionId: string) {
+  return nextSequence(tenantId, `roll:${sectionId}`, () =>
+    prisma.student.count({ where: { sectionId } })
+  );
 }
 function slug(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "");
@@ -226,6 +253,21 @@ export async function markAttendance(input: {
   date?: Date;
 }) {
   const date = normalizeDate(input.date ?? new Date());
+  // Tenant guard: reject the whole batch if ANY studentId is foreign. The
+  // Attendance upsert key (studentId, date) is globally unique, so an
+  // unvalidated id would let one tenant overwrite another tenant's rows.
+  await assertStudentsOwned(input.tenantId, input.entries.map((e) => e.studentId));
+
+  // One batched fetch for all absentees (was one deep query per absentee).
+  const absentIds = input.entries.filter((e) => e.status === "ABSENT").map((e) => e.studentId);
+  const absentees = absentIds.length
+    ? await prisma.student.findMany({
+        where: { id: { in: absentIds }, tenantId: input.tenantId },
+        include: { user: true, parents: { include: { parent: { include: { user: true } } } } },
+      })
+    : [];
+  const byId = new Map(absentees.map((s) => [s.id, s]));
+
   for (const e of input.entries) {
     await prisma.attendance.upsert({
       where: { studentId_date: { studentId: e.studentId, date } },
@@ -240,13 +282,7 @@ export async function markAttendance(input: {
       },
     });
     if (e.status === "ABSENT") {
-      const student = await prisma.student.findUnique({
-        where: { id: e.studentId },
-        include: {
-          user: true,
-          parents: { include: { parent: { include: { user: true } } } },
-        },
-      });
+      const student = byId.get(e.studentId);
       if (student) {
         const parentPhone = student.parents[0]?.parent.user.phone ?? undefined;
         const parentUserId = student.parents[0]?.parent.user.id;
@@ -279,10 +315,26 @@ export async function markAttendance(input: {
   });
 }
 
+/**
+ * Parse an <input type="datetime-local"> value ("YYYY-MM-DDTHH:mm") as IST.
+ * The control posts a bare local time with NO offset; on a UTC serverless
+ * runtime `new Date(raw)` used to shift every schedule by +5:30 hours.
+ * Returns null for malformed input (callers must reject, not store Invalid Date).
+ */
+export function parseLocalDT(raw: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(raw?.trim() ?? "");
+  if (!m) return null;
+  const d = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00+05:30`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export function normalizeDate(d: Date) {
-  const c = new Date(d);
-  c.setHours(0, 0, 0, 0);
-  return c;
+  // Attendance day-key anchored to IST (UTC+5:30) so a UTC serverless deploy
+  // and local dev agree on "today". Server-local midnight would shift the key
+  // per-host and (studentId, date) is a hard unique constraint.
+  const IST_OFFSET_MIN = 330;
+  const ist = new Date(d.getTime() + IST_OFFSET_MIN * 60_000);
+  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()));
 }
 
 // ---- FEES ----
@@ -295,8 +347,12 @@ export async function createInvoice(input: {
   actorId?: string;
   dueInDays?: number;
 }) {
-  const structure = await prisma.feeStructure.findUnique({ where: { id: input.structureId } });
+  // Tenant guards: fee structure AND student must both belong to this tenant.
+  const structure = await prisma.feeStructure.findFirst({
+    where: { id: input.structureId, tenantId: input.tenantId },
+  });
   if (!structure) throw new Error("Fee structure not found");
+  await ownedOrThrow(prisma.student, { id: input.studentId, tenantId: input.tenantId });
   const items: { head: string; amount: number }[] = [];
   const push = (h: string, a: number) => {
     if (a > 0) items.push({ head: h, amount: a });
@@ -336,8 +392,10 @@ export async function createInvoice(input: {
 }
 
 async function nextInvoiceNo(tenantId: string) {
-  const count = await prisma.invoice.count({ where: { tenantId } });
-  return `INV-${YEAR}-${String(count + 1).padStart(5, "0")}`;
+  const seq = await nextSequence(tenantId, "invoice", () =>
+    prisma.invoice.count({ where: { tenantId } })
+  );
+  return `INV-${YEAR}-${String(seq).padStart(5, "0")}`;
 }
 
 export async function payInvoice(input: {
@@ -353,6 +411,14 @@ export async function payInvoice(input: {
   if (!inv) throw new Error("Invoice not found");
   if (inv.status === "PAID") throw new Error("Already paid");
   const gatewayTxId = `pay_${Math.random().toString(36).slice(2, 12)}`;
+  // Atomic claim BEFORE recording the payment: a concurrent double-submit
+  // (double-click / retry) loses this conditional update and throws, instead
+  // of creating a second Payment row for the same invoice (TOCTOU).
+  const claimed = await prisma.invoice.updateMany({
+    where: { id: inv.id, tenantId: input.tenantId, status: { not: "PAID" } },
+    data: { status: "PAID", paidAt: new Date() },
+  });
+  if (claimed.count === 0) throw new Error("Already paid");
   await prisma.payment.create({
     data: {
       invoiceId: inv.id,
@@ -361,10 +427,6 @@ export async function payInvoice(input: {
       reference: gatewayTxId,
       gatewayTxId,
     },
-  });
-  await prisma.invoice.update({
-    where: { id: inv.id },
-    data: { status: "PAID", paidAt: new Date() },
   });
   const parentUser = inv.student.parents[0]?.parent.user;
   await publish({
@@ -402,6 +464,8 @@ export async function publishCourse(input: {
   actorId?: string;
   courseId: string;
 }) {
+  // Tenant guard before mutating by id (prevents cross-tenant publish / IDOR).
+  await ownedOrThrow(prisma.course, { id: input.courseId, tenantId: input.tenantId });
   await prisma.course.update({
     where: { id: input.courseId },
     data: { publishedAt: new Date() },
@@ -422,6 +486,12 @@ export async function submitAssignment(input: {
   studentId: string;
   content: string;
 }) {
+  // Tenant guard: the assignment must belong to this tenant (via its course) —
+  // otherwise a student could inject submissions into another institution.
+  await ownedOrThrow(prisma.assignment, {
+    id: input.assignmentId,
+    course: { tenantId: input.tenantId },
+  });
   const sub = await prisma.assignmentSubmission.upsert({
     where: { assignmentId_studentId: { assignmentId: input.assignmentId, studentId: input.studentId } },
     update: { content: input.content, submittedAt: new Date() },
@@ -448,6 +518,8 @@ export async function gradeSubmission(input: {
   score: number;
   feedback?: string;
 }) {
+  // Tenant guard: submission has no direct tenantId — scope via its student.
+  await ownedOrThrow(prisma.assignmentSubmission, { id: input.submissionId, student: { tenantId: input.tenantId } });
   const sub = await prisma.assignmentSubmission.update({
     where: { id: input.submissionId },
     data: { score: input.score, feedback: input.feedback },
@@ -471,6 +543,11 @@ export async function enterMarks(input: {
   examId: string;
   entries: { studentId: string; score: number; remark?: string }[];
 }) {
+  // Tenant guards: the exam AND every studentId must belong to this tenant.
+  // Mark has no tenantId column and (examId, studentId) is globally unique, so
+  // unvalidated ids would let a teacher rewrite another institution's marks.
+  await ownedOrThrow(prisma.exam, { id: input.examId, tenantId: input.tenantId });
+  await assertStudentsOwned(input.tenantId, input.entries.map((e) => e.studentId));
   for (const e of input.entries) {
     await prisma.mark.upsert({
       where: { examId_studentId: { examId: input.examId, studentId: e.studentId } },
@@ -483,7 +560,11 @@ export async function enterMarks(input: {
       },
     });
   }
-  await prisma.exam.update({ where: { id: input.examId }, data: { status: "EVALUATED" } });
+  // Only flip to EVALUATED when marks were actually entered — a blank form
+  // submit must not change exam state.
+  if (input.entries.length > 0) {
+    await prisma.exam.update({ where: { id: input.examId }, data: { status: "EVALUATED" } });
+  }
   await audit({
     tenantId: input.tenantId,
     actorId: input.actorId,
@@ -495,10 +576,15 @@ export async function enterMarks(input: {
 }
 
 export async function publishExam(input: { tenantId: string; actorId?: string; examId: string }) {
-  const exam = await prisma.exam.update({
-    where: { id: input.examId },
+  // Tenant guard before mutating by id (prevents cross-tenant publish / IDOR).
+  const exam = await ownedOrThrow<{ id: string; title: string; class: { name: string }; subject: { name: string } }>(
+    prisma.exam,
+    { id: input.examId, tenantId: input.tenantId },
+    { include: { subject: true, class: true } }
+  );
+  await prisma.exam.update({
+    where: { id: exam.id },
     data: { status: "PUBLISHED" },
-    include: { subject: true, class: true },
   });
   await publish({
     type: "exam.result.published",
@@ -553,14 +639,32 @@ export async function postNotice(input: {
     entityId: n.id,
     detail: input.title,
   });
-  const roleMap: Record<string, string | null> = { PARENTS: "PARENT", STAFF: "TEACHER", CLASS: "STUDENT", ALL: null };
-  await notify({
-    tenantId: input.tenantId,
-    role: roleMap[input.audience] ?? null,
-    kind: "notice",
-    title: input.title,
-    body: input.body.slice(0, 140),
-  });
+  if (input.audience === "CLASS" && input.audienceScope) {
+    // Class-scoped notice → notify ONLY that class's students (it used to
+    // broadcast to every student in the tenant, ignoring audienceScope).
+    const students = await prisma.student.findMany({
+      where: { tenantId: input.tenantId, classId: input.audienceScope, status: "ACTIVE" },
+      select: { userId: true },
+    });
+    for (const s of students) {
+      await notify({
+        tenantId: input.tenantId,
+        userId: s.userId,
+        kind: "notice",
+        title: input.title,
+        body: input.body.slice(0, 140),
+      });
+    }
+  } else {
+    const roleMap: Record<string, string | null> = { PARENTS: "PARENT", STAFF: "TEACHER", CLASS: "STUDENT", ALL: null };
+    await notify({
+      tenantId: input.tenantId,
+      role: roleMap[input.audience] ?? null,
+      kind: "notice",
+      title: input.title,
+      body: input.body.slice(0, 140),
+    });
+  }
   return n;
 }
 
@@ -570,11 +674,22 @@ export async function runPayroll(input: { tenantId: string; actorId?: string; pe
   const staff = await prisma.staff.findMany({
     where: { tenantId: input.tenantId, status: "ACTIVE" },
   });
-  const totalGross = staff.reduce((s, x) => s + x.ctcMonthly, 0);
-  const totalNet = staff.reduce((s, x) => s + Math.round(x.ctcMonthly * 0.88), 0);
+  // Compute the lines FIRST, then derive header totals from the very same
+  // numbers — a separately-rounded header used to drift ₹1/employee from the
+  // sum of its lines (reconciliation failure on the finance page).
+  const lines = staff.map((s) => {
+    const pf = Math.round(s.ctcMonthly * 0.06);
+    const esi = Math.round(s.ctcMonthly * 0.015);
+    const tds = Math.round(s.ctcMonthly * 0.045);
+    return { staffId: s.id, gross: s.ctcMonthly, pf, esi, tds, net: s.ctcMonthly - pf - esi - tds };
+  });
+  const totalGross = lines.reduce((s, l) => s + l.gross, 0);
+  const totalNet = lines.reduce((s, l) => s + l.net, 0);
   const run = await prisma.payrollRun.upsert({
     where: { tenantId_period: { tenantId: input.tenantId, period: input.period } },
-    update: {},
+    // Re-running a period rebuilds the lines below, so the header totals must
+    // refresh too (they used to stay stale after a staff change).
+    update: { totalGross, totalNet },
     create: {
       tenantId: input.tenantId,
       period: input.period,
@@ -584,21 +699,8 @@ export async function runPayroll(input: { tenantId: string; actorId?: string; pe
     },
   });
   await prisma.payrollLine.deleteMany({ where: { payrollRunId: run.id } });
-  for (const s of staff) {
-    const pf = Math.round(s.ctcMonthly * 0.06);
-    const esi = Math.round(s.ctcMonthly * 0.015);
-    const tds = Math.round(s.ctcMonthly * 0.045);
-    await prisma.payrollLine.create({
-      data: {
-        payrollRunId: run.id,
-        staffId: s.id,
-        gross: s.ctcMonthly,
-        pf,
-        esi,
-        tds,
-        net: s.ctcMonthly - pf - esi - tds,
-      },
-    });
+  for (const l of lines) {
+    await prisma.payrollLine.create({ data: { payrollRunId: run.id, ...l } });
   }
   await audit({
     tenantId: input.tenantId,
@@ -612,6 +714,8 @@ export async function runPayroll(input: { tenantId: string; actorId?: string; pe
 }
 
 export async function approvePayroll(input: { tenantId: string; actorId?: string; runId: string }) {
+  // Tenant guard before mutating by id (same pattern as disbursePayroll).
+  await ownedOrThrow(prisma.payrollRun, { id: input.runId, tenantId: input.tenantId });
   const run = await prisma.payrollRun.update({
     where: { id: input.runId },
     data: { status: "APPROVED" },
@@ -626,6 +730,8 @@ export async function approvePayroll(input: { tenantId: string; actorId?: string
 }
 
 export async function disbursePayroll(input: { tenantId: string; actorId?: string; runId: string }) {
+  // Tenant guard before mutating by id (prevents cross-tenant disbursal / IDOR).
+  await ownedOrThrow(prisma.payrollRun, { id: input.runId, tenantId: input.tenantId });
   const run = await prisma.payrollRun.update({
     where: { id: input.runId },
     data: { status: "DISBURSED" },
@@ -652,6 +758,8 @@ export async function issueBook(input: {
     where: { id: input.itemId, tenantId: input.tenantId },
   });
   if (!item || item.available < 1) throw new Error("Book not available");
+  // Tenant guard: the borrower must belong to this tenant too.
+  await ownedOrThrow(prisma.student, { id: input.studentId, tenantId: input.tenantId });
   const dueAt = new Date(Date.now() + (input.days ?? 14) * 86400000);
   const loan = await prisma.libraryLoan.create({
     data: {
@@ -660,9 +768,10 @@ export async function issueBook(input: {
       dueAt,
     },
   });
+  // Atomic decrement (read-modify-write raced under two simultaneous issues).
   await prisma.libraryItem.update({
     where: { id: item.id },
-    data: { available: item.available - 1 },
+    data: { available: { decrement: 1 } },
   });
   await audit({
     tenantId: input.tenantId,
@@ -675,22 +784,27 @@ export async function issueBook(input: {
 }
 
 export async function returnBook(input: { tenantId: string; actorId?: string; loanId: string }) {
-  const loan = await prisma.libraryLoan.findUnique({ where: { id: input.loanId } });
-  if (!loan) throw new Error("Loan not found");
+  // Tenant guard: loan has no direct tenantId — scope via its library item.
+  const loan = await ownedOrThrow<{ id: string; dueAt: Date; itemId: string; returnedAt: Date | null }>(
+    prisma.libraryLoan,
+    { id: input.loanId, item: { tenantId: input.tenantId } }
+  );
+  // Idempotency: a loan can only be returned once — double-return used to
+  // increment stock twice, minting phantom copies.
+  if (loan.returnedAt) throw new Error("Book already returned");
   const now = new Date();
   const overdueDays = Math.max(0, Math.floor((now.getTime() - loan.dueAt.getTime()) / 86400000));
   const fine = overdueDays * 5;
-  await prisma.libraryLoan.update({
-    where: { id: loan.id },
+  // Conditional claim (guards the concurrent double-return too).
+  const claimed = await prisma.libraryLoan.updateMany({
+    where: { id: loan.id, returnedAt: null },
     data: { returnedAt: now, fine },
   });
-  const item = await prisma.libraryItem.findUnique({ where: { id: loan.itemId } });
-  if (item) {
-    await prisma.libraryItem.update({
-      where: { id: item.id },
-      data: { available: item.available + 1 },
-    });
-  }
+  if (claimed.count === 0) throw new Error("Book already returned");
+  await prisma.libraryItem.update({
+    where: { id: loan.itemId },
+    data: { available: { increment: 1 } },
+  });
   await audit({
     tenantId: input.tenantId,
     actorId: input.actorId,
@@ -713,7 +827,16 @@ export async function createUser(input: {
   phone?: string;
   password?: string;
 }) {
-  const passwordHash = await hashPassword(input.password ?? "password123");
+  // Billing gate for tenant-scoped users only (platform-level users have no
+  // tenant and no subscription). Staff-type roles consume a staff seat.
+  if (input.tenantId) {
+    const STAFF_ROLES = new Set([
+      "TEACHER", "HR", "LIBRARIAN", "TRANSPORT_MGR", "ACCOUNTANT", "PRINCIPAL", "STAFF",
+    ]);
+    if (STAFF_ROLES.has(input.role)) await assertSeat(input.tenantId, "staff");
+    else await assertActiveSubscription(input.tenantId);
+  }
+  const passwordHash = await hashPassword(input.password ?? provisionedPassword());
   const u = await prisma.user.create({
     data: {
       email: input.email,

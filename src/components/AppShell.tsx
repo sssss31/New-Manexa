@@ -3,6 +3,7 @@ import { ReactNode } from "react";
 import { Logo } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
 import { CommandK, CommandItem } from "./CommandK";
+import { LiveBell } from "./LiveBell";
 import { logoutAction } from "@/app/login/actions";
 import { prisma } from "@/lib/prisma";
 
@@ -116,22 +117,7 @@ export async function AppShell({
           <div className="text-sm text-muted hidden lg:block">MANEXA · AI-Powered School Management</div>
           <div className="flex items-center gap-2 ml-auto">
             <CommandK items={commandItems} />
-            <Link
-              href="/notifications"
-              className="btn-ghost w-9 h-9 p-0 relative"
-              aria-label={`Notifications${unread ? ` — ${unread} unread` : ""}`}
-              title="Notifications"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
-                <path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8z" />
-                <path d="M10 21a2 2 0 0 0 4 0" />
-              </svg>
-              {unread > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-accent text-accent-fg text-[10px] font-semibold flex items-center justify-center">
-                  {unread > 9 ? "9+" : unread}
-                </span>
-              )}
-            </Link>
+            <LiveBell initialUnread={unread} />
             <ThemeToggle />
           </div>
         </header>

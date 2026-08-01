@@ -18,9 +18,11 @@ export default async function TeacherAttendance({ searchParams }: { searchParams
     : [];
 
   const activeSectionId = sp.sectionId ?? sections[0]?.id;
+  // Tenant-scoped + active-only: sectionId comes from the URL, so without the
+  // tenant filter any teacher could render another institution's roster.
   const students = activeSectionId
     ? await prisma.student.findMany({
-        where: { sectionId: activeSectionId },
+        where: { sectionId: activeSectionId, tenantId: user.tenantId!, status: "ACTIVE", deletedAt: null },
         include: { user: true, attendance: { where: { date: normalizeDate(new Date()) }, take: 1 } },
         orderBy: { rollNo: "asc" },
       })

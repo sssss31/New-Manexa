@@ -32,6 +32,23 @@ const schema = z.object({
   // Optional — enables the Redis-backed rate limiter / cache when set.
   REDIS_URL: z.string().url().optional(),
 
+  // Upstash Redis (REST) — powers the distributed rate limiter across all
+  // serverless instances. BOTH must be set to activate it; otherwise the app
+  // falls back to a per-instance in-memory limiter (fine for local, weak on
+  // serverless). Get these from the Upstash console → REST API section.
+  UPSTASH_REDIS_REST_URL: z.string().url().optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(20).optional(),
+
+  // Web Push (VAPID). Public key is exposed to the browser to subscribe; the
+  // private key signs push messages server-side. BOTH must be set to enable
+  // push; otherwise the app runs fine without phone notifications. Generate
+  // once with:  npx web-push generate-vapid-keys
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().min(80).optional(),
+  VAPID_PRIVATE_KEY: z.string().min(20).optional(),
+  // Contact address embedded in the VAPID JWT (mailto: or https:). Optional —
+  // defaults to a mailto using SUPERADMIN_EMAIL or a placeholder.
+  VAPID_SUBJECT: z.string().optional(),
+
   // Demo mode: "true" shows sample credentials on the login screen. Leave unset
   // in production so no demo accounts/passwords are exposed.
   NEXT_PUBLIC_DEMO_MODE: z.enum(["true", "false"]).optional(),

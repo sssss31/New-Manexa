@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireRole, hashPassword } from "@/lib/auth";
+import { requireRole, hashPassword, provisionedPassword } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { generateInstitutionId } from "@/lib/tenancy";
 import { seedTenantPermissions } from "@/lib/permissions";
@@ -28,7 +28,18 @@ export async function createTenantAction(formData: FormData) {
   if (!parsed.success) redirect("/admin/tenants/new?err=invalid");
   const d = parsed.data;
   const plan = d.planCode ? await prisma.subscriptionPlan.findUnique({ where: { code: d.planCode } }) : null;
+  // Fail-fast duplicate checks BEFORE creating anything — a P2002 halfway
+  // through used to strand the tenant in PROVISIONING with no admin.
+  if (await prisma.tenant.findUnique({ where: { subdomain: d.subdomain }, select: { id: true } })) {
+    redirect(`/admin/tenants/new?err=${encodeURIComponent("Subdomain already in use")}`);
+  }
+  if (await prisma.user.findUnique({ where: { email: d.adminEmail }, select: { id: true } })) {
+    redirect(`/admin/tenants/new?err=${encodeURIComponent("Admin email already has an account")}`);
+  }
   const institutionId = await generateInstitutionId(d.type);
+  // Random password in production (demo password only in demo mode) — every
+  // sales-onboarded admin used to go live with the public demo password.
+  const pw = await hashPassword(provisionedPassword());
   const t = await prisma.tenant.create({
     data: {
       name: d.name,
@@ -40,10 +51,25 @@ export async function createTenantAction(formData: FormData) {
       isolation: d.isolation,
       planId: plan?.id,
       status: "PROVISIONING",
+      // Billing lifecycle starts now — without this, admin-onboarded tenants
+      // never expired.
+      subscriptionExpiry: new Date(Date.now() + 365 * 24 * 3600 * 1000),
     },
   });
   await seedTenantPermissions(t.id);
-  const pw = await hashPassword("password123");
+  if (plan) {
+    // Attach a real Subscription row so seat limits + expiry are enforced
+    // (plan-only tenants used to get UNLIMITED seats — a billing bypass).
+    await prisma.subscription.create({
+      data: {
+        tenantId: t.id,
+        planId: plan.id,
+        studentSeats: 500,
+        status: "ACTIVE",
+        renewsAt: new Date(Date.now() + 365 * 24 * 3600 * 1000),
+      },
+    });
+  }
   await prisma.user.create({
     data: {
       email: d.adminEmail,

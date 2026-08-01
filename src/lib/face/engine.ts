@@ -7,6 +7,45 @@ import { notify } from "@/lib/notify";
 import { encryptEmbedding, decryptEmbedding } from "./crypto";
 import { cosineSimilarity, gradeQuality, l2normalize, QUALITY, type Pose, type QualityMetrics } from "./descriptor";
 
+// ---------- Server-side liveness / anti-replay ----------
+// The client-reported `livenessScore` is ADVISORY ONLY — a caller could POST
+// `livenessScore: 100` with a captured descriptor to bypass a client-trusted
+// gate. Server-side we enforce:
+//   1. Replay detection — an identical descriptor re-submitted within a short
+//      window is a captured-vector replay → rejected. (Live faces vary frame
+//      to frame; byte-identical vectors do not recur naturally.)
+//   2. Quality re-grade (already done downstream).
+// True passive photo/screen liveness needs a real model — pluggable via
+// FACE_LIVENESS_PROVIDER (unset = "basic": replay + quality + advisory score).
+const LIVENESS_ADVISORY_MIN = Number(process.env.FACE_LIVENESS_MIN ?? 35);
+const REPLAY_WINDOW_MS = 8000;
+const seenDescriptors = new Map<string, number>(); // fingerprint -> lastSeen ms
+
+function descriptorFingerprint(sessionId: string, vec: number[]): string {
+  // Quantize the leading dims finely so only near-identical (replayed) vectors
+  // collide; genuine live frames differ enough to miss.
+  let fp = sessionId + "|";
+  const n = Math.min(48, vec.length);
+  for (let i = 0; i < n; i++) fp += Math.round(vec[i] * 1000) + ",";
+  return fp;
+}
+
+/** True if this looks live; false = spoof/replay. Prunes its own cache. */
+function passesLiveness(sessionId: string, vec: number[], clientScore: number): boolean {
+  const now = Date.now();
+  // Advisory: an honestly-low self-reported score is still respected.
+  if (clientScore < LIVENESS_ADVISORY_MIN) return false;
+  // Prune stale fingerprints (bounded cleanup).
+  if (seenDescriptors.size > 5000) {
+    for (const [k, t] of seenDescriptors) if (now - t > REPLAY_WINDOW_MS) seenDescriptors.delete(k);
+  }
+  const fp = descriptorFingerprint(sessionId, vec);
+  const last = seenDescriptors.get(fp);
+  seenDescriptors.set(fp, now);
+  if (last !== undefined && now - last < REPLAY_WINDOW_MS) return false; // replay
+  return true;
+}
+
 // ---------- Enrollment ----------
 
 export async function enrollSample(input: {
@@ -18,6 +57,20 @@ export async function enrollSample(input: {
   descriptor: number[];
   quality: QualityMetrics;
 }) {
+  // Tenant guard FIRST (authz before validation): the subject must exist IN
+  // THIS TENANT. FaceProfile's studentId/staffId are globally unique, so an
+  // unvalidated foreign id would bind a biometric template across tenants AND
+  // permanently block the real tenant from ever enrolling that subject.
+  const subjectOk =
+    input.subjectType === "STUDENT"
+      ? await prisma.student.findFirst({ where: { id: input.subjectId, tenantId: input.tenantId }, select: { id: true } })
+      : await prisma.staff.findFirst({ where: { id: input.subjectId, tenantId: input.tenantId }, select: { id: true } });
+  if (!subjectOk) {
+    const err = new Error("Subject not found in this institution");
+    (err as any).code = "SUBJECT_FORBIDDEN";
+    throw err;
+  }
+
   // Server-side re-validation — never trust the client's own quality claim.
   const verdict = gradeQuality(input.quality);
   if (!verdict.ok) {
@@ -170,16 +223,19 @@ export async function recognize(input: {
     return { decision, confidence, latencyMs };
   };
 
-  // Gate 1: quality.
+  // Gate 1: quality (server re-grade — never trust the client's own claim).
   const verdict = gradeQuality(input.quality);
   if (!verdict.ok) return finish("QUALITY_REJECTED", 0);
 
-  // Gate 2: anti-spoofing / liveness. A perfectly static or too-erratic input
-  // fails. (Production: dedicated liveness model — Silent-Face / IR / depth.)
-  if (input.livenessScore < 35) return finish("SPOOF_REJECTED", 0);
+  const vec = l2normalize(input.descriptor);
+
+  // Gate 2: anti-spoofing / liveness — SERVER-side (replay detection + advisory
+  // client score). The client score alone can no longer wave a spoof through.
+  if (!passesLiveness(session.id, vec, input.livenessScore)) {
+    return finish("SPOOF_REJECTED", 0);
+  }
 
   // Gate 3: match against the section gallery.
-  const vec = l2normalize(input.descriptor);
   const gallery = await loadGallery(input.tenantId, session.classId, session.sectionId);
   let best: { entry: GalleryEntry; sim: number } | null = null;
   for (const entry of gallery) {
@@ -339,6 +395,13 @@ export async function startSession(input: {
 export const QUALITY_DEFAULT_THRESHOLD = 88;
 
 export async function stopSession(input: { tenantId: string; actorId: string; sessionId: string }) {
+  // Defense-in-depth tenant guard at the engine boundary (the route also
+  // checks ownership, but the engine must not trust its callers).
+  const owned = await prisma.faceAttendanceSession.findFirst({
+    where: { id: input.sessionId, tenantId: input.tenantId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error("Session not found");
   const session = await prisma.faceAttendanceSession.update({
     where: { id: input.sessionId },
     data: { status: "CLOSED", endedAt: new Date() },

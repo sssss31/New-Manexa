@@ -2,6 +2,7 @@
 // consumers per SAD §12; here we fire rules synchronously and record runs.
 
 import { prisma } from "./prisma";
+import { logger } from "./logger";
 
 export type DomainEvent =
   | { type: "attendance.absent"; tenantId: string; studentId: string; studentName: string; parentPhone?: string }
@@ -12,24 +13,31 @@ export type DomainEvent =
   | { type: "assignment.missed"; tenantId: string; assignmentId: string; studentId: string; studentName: string };
 
 export async function publish(evt: DomainEvent) {
-  const autos = await prisma.automation.findMany({
-    where: { tenantId: evt.tenantId, eventType: evt.type, enabled: true },
-  });
-  for (const a of autos) {
-    const detail = describe(a.action, evt);
-    await prisma.automationRun.create({
-      data: {
-        automationId: a.id,
-        triggeredBy: evt.type,
-        status: "OK",
-        detail,
-      },
+  // Best-effort side-channel: a broken automation must NEVER abort the calling
+  // mutation (callers publish AFTER the primary write has committed — a throw
+  // here used to 500 the request while e.g. a payment was already recorded).
+  try {
+    const autos = await prisma.automation.findMany({
+      where: { tenantId: evt.tenantId, eventType: evt.type, enabled: true },
     });
-    await prisma.automation.update({
-      where: { id: a.id },
-      data: { runsCount: { increment: 1 }, lastRunAt: new Date() },
-    });
-    await performAction(a.action, evt);
+    for (const a of autos) {
+      const detail = describe(a.action, evt);
+      await prisma.automationRun.create({
+        data: {
+          automationId: a.id,
+          triggeredBy: evt.type,
+          status: "OK",
+          detail,
+        },
+      });
+      await prisma.automation.update({
+        where: { id: a.id },
+        data: { runsCount: { increment: 1 }, lastRunAt: new Date() },
+      });
+      await performAction(a.action, evt);
+    }
+  } catch (err) {
+    logger.error("automation publish failed", err, { eventType: evt.type, tenantId: evt.tenantId });
   }
 }
 

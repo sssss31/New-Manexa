@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { createSession, destroySession, roleHome, verifyPassword } from "@/lib/auth";
-import { rateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
 import { logger, isNextControlFlowError, isDbConnectionError } from "@/lib/logger";
 
@@ -22,7 +22,7 @@ export async function loginAction(formData: FormData) {
 
   try {
     // Brute-force protection: 5 attempts / 5 minutes per account.
-    if (!rateLimit(`login:${email}`, 5, 5 * 60_000)) {
+    if (!(await checkRateLimit(`login:${email}`, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs, { durable: true }))) {
       await audit({ action: "LOGIN_LOCKED", entity: "User", detail: email });
       redirect("/login?err=locked");
     }

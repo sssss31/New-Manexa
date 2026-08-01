@@ -9,6 +9,7 @@ import { StatusBadge, Tag } from "@/components/ui";
 import { AreaChart, BarChart, DonutChart } from "@/components/Charts";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { Panel } from "@/components/dashboard/Panel";
+import { BillingBanner } from "@/components/billing/BillingBanner";
 import { Reveal, RevealGroup, RevealItem } from "@/components/marketing/Reveal";
 import { inr, relative, dateShort } from "@/lib/format";
 import { normalizeDate } from "@/lib/engine";
@@ -112,6 +113,11 @@ export default async function InstitutionCockpit() {
           <Link href="/institution/notices" className="btn-primary gap-1.5"><Plus size={15} /> New notice</Link>
         </div>
       </Reveal>
+
+      {/* Subscription / seat status — only renders when action is needed */}
+      <div className="relative z-[1]">
+        <BillingBanner tenantId={tenantId} />
+      </div>
 
       {/* KPI grid */}
       <RevealGroup className="relative z-[1] grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">

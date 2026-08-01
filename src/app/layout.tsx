@@ -11,6 +11,12 @@ export const metadata: Metadata = {
   title: "MANEXA — AI-Powered School Management",
   description:
     "MANEXA is a multi-tenant SaaS platform that runs every academic, administrative, financial and operational function of a modern educational institution.",
+  manifest: "/manifest.json",
+  appleWebApp: { capable: true, title: "MANEXA", statusBarStyle: "black-translucent" },
+};
+
+export const viewport = {
+  themeColor: "#B6FF2A",
 };
 
 const themeScript = `(() => {

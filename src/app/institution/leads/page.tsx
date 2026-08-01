@@ -1,14 +1,20 @@
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth";
 import { PageHeader, SectionCard, StatusBadge, Stat, Tag } from "@/components/ui";
+import { BillingBanner } from "@/components/billing/BillingBanner";
 import { relative } from "@/lib/format";
 import { advanceLeadAction, admitLeadAction, createLeadAction } from "../actions";
 
 const STAGES = ["NEW", "CONTACTED", "VISIT_SCHEDULED", "VISITED", "APPLICATION", "CONFIRMED", "LOST"];
 
-export default async function LeadsPage() {
+export default async function LeadsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ err?: string }>;
+}) {
   const user = await requireRole(["INSTITUTION_ADMIN", "PRINCIPAL"]);
   const tenantId = user.tenantId!;
+  const err = (await searchParams)?.err;
   const [leads, classes, sections] = await Promise.all([
     prisma.lead.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" }, take: 200 }),
     prisma.class.findMany({ where: { tenantId }, orderBy: { name: "asc" } }),
@@ -23,6 +29,12 @@ export default async function LeadsPage() {
         title="LEAD & Admissions CRM"
         sub="Capture from any channel, nurture through stages, convert to enrolment"
       />
+      <BillingBanner tenantId={tenantId} />
+      {err && (
+        <div className="card mb-6 border border-error/30 bg-error/12 p-4 text-sm text-error" role="alert">
+          {err}
+        </div>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-7 gap-2 mb-6">
         {byStage.map((b) => (
           <Stat key={b.s} label={b.s.replace(/_/g, " ")} value={b.n} tone={b.s === "CONFIRMED" ? "success" : b.s === "LOST" ? "error" : "default"} />

@@ -20,7 +20,20 @@ export type Role =
   | "HR";
 
 export async function hashPassword(pw: string) {
-  return bcrypt.hash(pw, 10);
+  // Cost 12 = current OWASP baseline. Old cost-10 hashes keep verifying
+  // (bcrypt embeds the cost in the hash) and upgrade on next password change.
+  return bcrypt.hash(pw, 12);
+}
+
+/**
+ * Strong random password for server-provisioned accounts (admissions, admin
+ * user-create). In demo mode this returns the well-known demo password so
+ * seeded/demo flows keep working; in production every provisioned account
+ * gets an unguessable secret (the admin shares/reset it out-of-band).
+ */
+export function provisionedPassword(): string {
+  if (process.env.NEXT_PUBLIC_DEMO_MODE === "true") return "password123";
+  return randomBytes(18).toString("base64url"); // ~24 chars, 144 bits
 }
 
 // Password policy — enforced on all NEW accounts created through the UI.
@@ -45,6 +58,8 @@ export async function createSession(userId: string) {
   store.set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
+    // HTTPS-only in production so the 14-day token never crosses plain HTTP.
+    secure: process.env.NODE_ENV === "production",
     expires: expiresAt,
     path: "/",
   });
@@ -72,7 +87,12 @@ export async function getCurrentUser() {
     where: { token },
     include: { user: { include: { tenant: true } } },
   });
-  if (!session || session.expiresAt < new Date()) return null;
+  if (!session) return null;
+  if (session.expiresAt < new Date()) {
+    // Lazy cleanup: purge the dead row so stale tokens can't linger in the DB.
+    await prisma.session.delete({ where: { token } }).catch(() => {});
+    return null;
+  }
   return session.user;
 }
 
@@ -87,6 +107,25 @@ export async function requireRole(roles: Role | Role[]) {
   const list = Array.isArray(roles) ? roles : [roles];
   if (!list.includes(user.role as Role)) {
     redirect("/login?err=forbidden");
+  }
+  return user;
+}
+
+/**
+ * Granular authorization: the signed-in user must hold `permission` in the
+ * tenant's RBAC matrix (Roles page). Makes revoking a permission actually take
+ * effect — the coarse role check alone never consulted the matrix.
+ * `allowedRoles` keeps the portal-level role gate (defense in depth).
+ */
+export async function requirePermission(permission: string, allowedRoles?: Role | Role[]) {
+  const { can } = await import("./permissions"); // lazy to avoid import cycles
+  const user = await requireUser();
+  if (allowedRoles) {
+    const list = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
+    if (!list.includes(user.role as Role)) redirect("/login?err=forbidden");
+  }
+  if (!(await can(user, permission))) {
+    redirect(`${roleHome(user.role)}?err=${encodeURIComponent("You don't have permission for this action")}`);
   }
   return user;
 }
@@ -106,7 +145,14 @@ export function roleHome(role: string): string {
       return "/parent";
     case "STUDENT":
       return "/student";
+    // Staff roles without a dedicated portal yet — land on notifications
+    // (works for any authenticated role). Returning /login here caused an
+    // infinite redirect loop for logged-in LIBRARIAN/TRANSPORT_MGR/HR users.
+    case "LIBRARIAN":
+    case "TRANSPORT_MGR":
+    case "HR":
+      return "/notifications";
     default:
-      return "/login";
+      return "/notifications";
   }
 }

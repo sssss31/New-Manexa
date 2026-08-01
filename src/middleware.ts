@@ -17,8 +17,11 @@ const CSP = [
 ].join("; ");
 
 export function middleware(req: NextRequest) {
-  const res = NextResponse.next();
-  res.headers.set("x-pathname", req.nextUrl.pathname);
+  // x-pathname must ride the REQUEST headers — server components read it via
+  // headers(). Setting it only on the response left the value client-spoofable.
+  const reqHeaders = new Headers(req.headers);
+  reqHeaders.set("x-pathname", req.nextUrl.pathname);
+  const res = NextResponse.next({ request: { headers: reqHeaders } });
   res.headers.set("Content-Security-Policy", CSP);
   res.headers.set("X-Frame-Options", "DENY");
   res.headers.set("X-Content-Type-Options", "nosniff");

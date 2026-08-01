@@ -3,24 +3,35 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireRole } from "@/lib/auth";
+import { requireRole, requirePermission } from "@/lib/auth";
 import {
   admitFromLead,
   advanceLead,
   createLead,
+  parseLocalDT,
   postNotice,
   runPayroll,
   approvePayroll,
   disbursePayroll,
 } from "@/lib/engine";
 import { audit } from "@/lib/audit";
+import { notify } from "@/lib/notify";
+import { isBillingError } from "@/lib/billing";
 
-async function actor() {
+// Duplicate-key (P2002) → friendly message instead of a raw 500.
+function isDup(e: unknown): boolean {
+  return (e as { code?: string })?.code === "P2002";
+}
+
+// Portal-level role gate. For sensitive mutations pass the RBAC permission key
+// so revoking it on the Roles page actually blocks the action.
+async function actor(permission?: string) {
+  if (permission) return requirePermission(permission, ["INSTITUTION_ADMIN", "PRINCIPAL"]);
   return requireRole(["INSTITUTION_ADMIN", "PRINCIPAL"]);
 }
 
 export async function createLeadAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("student.write");
   await createLead({
     tenantId: a.tenantId!,
     actorId: a.id,
@@ -35,7 +46,7 @@ export async function createLeadAction(formData: FormData) {
 }
 
 export async function advanceLeadAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("student.write");
   await advanceLead({
     tenantId: a.tenantId!,
     actorId: a.id,
@@ -47,46 +58,76 @@ export async function advanceLeadAction(formData: FormData) {
 }
 
 export async function admitLeadAction(formData: FormData) {
-  const a = await actor();
-  const res = await admitFromLead({
-    tenantId: a.tenantId!,
-    actorId: a.id,
-    leadId: String(formData.get("leadId")),
-    classId: String(formData.get("classId")),
-    sectionId: String(formData.get("sectionId")),
-  });
+  const a = await actor("student.write");
+  let studentId: string;
+  try {
+    const res = await admitFromLead({
+      tenantId: a.tenantId!,
+      actorId: a.id,
+      leadId: String(formData.get("leadId")),
+      classId: String(formData.get("classId")),
+      sectionId: String(formData.get("sectionId")),
+    });
+    studentId = res.student.id;
+  } catch (e) {
+    // Seat-full / subscription-expired → send back to leads with a clear prompt
+    // instead of a 500. (redirect() throws NEXT_REDIRECT, which propagates.)
+    if (isBillingError(e)) {
+      redirect(`/institution/leads?err=${encodeURIComponent(e.message)}`);
+    }
+    // Concurrent admission race on admission number → ask to retry.
+    if (isDup(e)) {
+      redirect(`/institution/leads?err=${encodeURIComponent("Admission clashed with another in progress — please try again")}`);
+    }
+    throw e;
+  }
   revalidatePath("/institution/leads");
   revalidatePath("/institution/students");
-  redirect(`/institution/students/${res.student.id}`);
+  redirect(`/institution/students/${studentId}`);
 }
 
 export async function createClassAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("class.manage");
   const name = String(formData.get("name")).trim();
   const stream = String(formData.get("stream") || "") || null;
-  const cls = await prisma.class.create({ data: { tenantId: a.tenantId!, name, stream } });
   const sections = String(formData.get("sections") || "A")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  for (const sname of sections) {
-    await prisma.section.create({ data: { tenantId: a.tenantId!, classId: cls.id, name: sname, capacity: 40 } });
+  try {
+    // Transaction: a duplicate section name mid-loop must not leave a class
+    // with partial sections behind.
+    const cls = await prisma.$transaction(async (tx) => {
+      const c = await tx.class.create({ data: { tenantId: a.tenantId!, name, stream } });
+      for (const sname of sections) {
+        await tx.section.create({ data: { tenantId: a.tenantId!, classId: c.id, name: sname, capacity: 40 } });
+      }
+      return c;
+    });
+    await audit({ tenantId: a.tenantId!, actorId: a.id, action: "CLASS_CREATE", entity: "Class", entityId: cls.id, detail: `${name} · ${sections.join(",")}` });
+  } catch (e) {
+    if (isDup(e)) redirect(`/institution/classes?err=${encodeURIComponent(`Class “${name}” already exists`)}`);
+    throw e;
   }
-  await audit({ tenantId: a.tenantId!, actorId: a.id, action: "CLASS_CREATE", entity: "Class", entityId: cls.id, detail: `${name} · ${sections.join(",")}` });
   revalidatePath("/institution/classes");
 }
 
 export async function createSubjectAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("class.manage");
   const code = String(formData.get("code")).trim().toUpperCase();
   const name = String(formData.get("name")).trim();
-  await prisma.subject.create({ data: { tenantId: a.tenantId!, code, name } });
+  try {
+    await prisma.subject.create({ data: { tenantId: a.tenantId!, code, name } });
+  } catch (e) {
+    if (isDup(e)) redirect(`/institution/subjects?err=${encodeURIComponent(`Subject code ${code} already exists`)}`);
+    throw e;
+  }
   await audit({ tenantId: a.tenantId!, actorId: a.id, action: "SUBJECT_CREATE", entity: "Subject", detail: `${code} · ${name}` });
   revalidatePath("/institution/subjects");
 }
 
 export async function postNoticeAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("notice.post");
   await postNotice({
     tenantId: a.tenantId!,
     actorId: a.id,
@@ -100,11 +141,15 @@ export async function postNoticeAction(formData: FormData) {
 }
 
 export async function createFeeStructureAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("fee.manage");
+  const classId = String(formData.get("classId"));
+  // Tenant guard on the foreign key.
+  const cls = await prisma.class.findFirst({ where: { id: classId, tenantId: a.tenantId! }, select: { id: true } });
+  if (!cls) throw new Error("Class not found");
   await prisma.feeStructure.create({
     data: {
       tenantId: a.tenantId!,
-      classId: String(formData.get("classId")),
+      classId,
       name: String(formData.get("name") || "Annual"),
       tuition: Number(formData.get("tuition") || 0),
       transport: Number(formData.get("transport") || 0),
@@ -120,7 +165,7 @@ export async function createFeeStructureAction(formData: FormData) {
 }
 
 export async function createAutomationAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("settings.manage");
   await prisma.automation.create({
     data: {
       tenantId: a.tenantId!,
@@ -136,7 +181,7 @@ export async function createAutomationAction(formData: FormData) {
 }
 
 export async function toggleAutomationAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("settings.manage");
   const id = String(formData.get("id"));
   const auto = await prisma.automation.findFirst({ where: { id, tenantId: a.tenantId! } });
   if (!auto) return;
@@ -145,20 +190,20 @@ export async function toggleAutomationAction(formData: FormData) {
 }
 
 export async function runPayrollAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("payroll.manage");
   await runPayroll({ tenantId: a.tenantId!, actorId: a.id, period: String(formData.get("period")) });
   revalidatePath("/accounts/payroll");
   revalidatePath("/institution/staff");
 }
 
 export async function approvePayrollAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("payroll.manage");
   await approvePayroll({ tenantId: a.tenantId!, actorId: a.id, runId: String(formData.get("runId")) });
   revalidatePath("/accounts/payroll");
 }
 
 export async function disbursePayrollAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("payroll.manage");
   await disbursePayroll({ tenantId: a.tenantId!, actorId: a.id, runId: String(formData.get("runId")) });
   revalidatePath("/accounts/payroll");
 }
@@ -166,7 +211,7 @@ export async function disbursePayrollAction(formData: FormData) {
 // ---- Hostel ----
 
 export async function allocateHostelAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("hostel.manage");
   const roomId = String(formData.get("roomId"));
   const studentId = String(formData.get("studentId"));
   const room = await prisma.hostelRoom.findFirst({
@@ -174,6 +219,13 @@ export async function allocateHostelAction(formData: FormData) {
     include: { _count: { select: { allocations: true } } },
   });
   if (!room || room._count.allocations >= room.capacity) return;
+  // Tenant guard: HostelAllocation.studentId is globally unique — an
+  // unvalidated id used to let this upsert steal another tenant's allocation.
+  const student = await prisma.student.findFirst({
+    where: { id: studentId, tenantId: a.tenantId! },
+    select: { id: true },
+  });
+  if (!student) throw new Error("Student not found");
   await prisma.hostelAllocation.upsert({
     where: { studentId },
     update: { roomId },
@@ -184,7 +236,7 @@ export async function allocateHostelAction(formData: FormData) {
 }
 
 export async function createHostelRoomAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("hostel.manage");
   await prisma.hostelRoom.create({
     data: {
       tenantId: a.tenantId!,
@@ -201,7 +253,7 @@ export async function createHostelRoomAction(formData: FormData) {
 // ---- Inventory ----
 
 export async function createInventoryItemAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("inventory.manage");
   await prisma.inventoryItem.create({
     data: {
       tenantId: a.tenantId!,
@@ -217,7 +269,7 @@ export async function createInventoryItemAction(formData: FormData) {
 }
 
 export async function adjustStockAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("inventory.manage");
   const itemId = String(formData.get("itemId"));
   const delta = Number(formData.get("delta"));
   const reason = String(formData.get("reason") || "adjustment");
@@ -233,9 +285,16 @@ export async function adjustStockAction(formData: FormData) {
 // ---- Events ----
 
 export async function createEventAction(formData: FormData) {
-  const a = await actor();
+  const a = await actor("event.manage");
   const title = String(formData.get("title"));
   const audience = String(formData.get("audience") || "ALL");
+  // datetime-local posts a bare local time — parse as IST, reject garbage
+  // (a malformed value used to 500 with an "Invalid Date" already leaked
+  // into the notification body).
+  const startsAt = parseLocalDT(String(formData.get("startsAt")));
+  if (!startsAt) {
+    redirect(`/institution/events?err=${encodeURIComponent("Invalid event date/time")}`);
+  }
   const e = await prisma.event.create({
     data: {
       tenantId: a.tenantId!,
@@ -243,18 +302,19 @@ export async function createEventAction(formData: FormData) {
       description: String(formData.get("description") || "") || null,
       venue: String(formData.get("venue") || "") || null,
       audience,
-      startsAt: new Date(String(formData.get("startsAt"))),
+      startsAt,
     },
   });
   const roleMap: Record<string, string | null> = { PARENTS: "PARENT", STUDENTS: "STUDENT", STAFF: "TEACHER", ALL: null };
-  await prisma.notification.create({
-    data: {
-      tenantId: a.tenantId!,
-      role: roleMap[audience] ?? null,
-      kind: "event",
-      title: `New event — ${title}`,
-      body: `Scheduled ${new Date(String(formData.get("startsAt"))).toLocaleDateString("en-IN")}. Check the events calendar.`,
-    },
+  // Route through notify() so events reach phones (Web Push) like every other
+  // event type — a bare notification.create used to skip the push fan-out.
+  await notify({
+    tenantId: a.tenantId!,
+    role: roleMap[audience] ?? null,
+    kind: "event",
+    title: `New event — ${title}`,
+    body: `Scheduled ${startsAt.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}. Check the events calendar.`,
+    href: "/institution/events",
   });
   await audit({ tenantId: a.tenantId!, actorId: a.id, action: "EVENT_CREATE", entity: "Event", entityId: e.id, detail: title });
   revalidatePath("/institution/events");

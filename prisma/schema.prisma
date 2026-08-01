@@ -92,11 +92,28 @@ model User {
   loginEvents     LoginEvent[]
   parent          Parent?
   sessions        Session[]
+  pushSubs        PushSubscription[]
   staff           Staff?
   student         Student?
   tenant          Tenant?      @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId, role])
+}
+
+// Web Push (VAPID) subscriptions — one row per browser/device that opted in.
+// Lets the server buzz a user's phone even when the app/tab is closed.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  ua        String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model LoginEvent {
@@ -116,6 +133,28 @@ model LoginEvent {
 model InstitutionCounter {
   type String @id
   next Int    @default(1)
+}
+
+// Per-tenant atomic sequence generator (admission no, invoice no, employee
+// code, per-section roll no). Replaces count()+1, which raced to P2002 under
+// concurrency and replayed numbers after a delete.
+model SequenceCounter {
+  tenantId String
+  name     String // "admission" | "invoice" | "employee" | "roll:<sectionId>"
+  next     Int    @default(1)
+
+  @@id([tenantId, name])
+}
+
+// Durable, cross-instance rate-limit ledger. Used as the fallback for
+// low-frequency sensitive buckets (login/signup) when Upstash isn't configured
+// — the in-memory limiter is per-instance and useless on serverless.
+model RateLimitHit {
+  id  String   @id @default(cuid())
+  key String
+  at  DateTime @default(now())
+
+  @@index([key, at])
 }
 
 model Permission {
