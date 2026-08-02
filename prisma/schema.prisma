@@ -60,6 +60,7 @@ model Tenant {
   routes             Route[]
   sections           Section[]
   staff              Staff[]
+  staffAttendance    StaffAttendance[]
   students           Student[]
   subjects           Subject[]
   subscriptions      Subscription[]
@@ -353,11 +354,33 @@ model Staff {
   leaveBalance Int              @default(12)
   faceProfile  FaceProfile?
   payrollRuns  PayrollLine[]
+  attendance   StaffAttendance[]
   tenant       Tenant           @relation(fields: [tenantId], references: [id])
   user         User             @relation(fields: [userId], references: [id])
   timetables   TimetableEntry[]
 
   @@unique([tenantId, employeeCode])
+}
+
+// Daily staff/employee attendance rollup — first-in / last-out / worked-hours.
+// Punches (usually via face recognition at an office camera) update the same
+// day row. Separate from the student `Attendance` table by design.
+model StaffAttendance {
+  id            String    @id @default(cuid())
+  tenantId      String
+  staffId       String
+  date          DateTime // IST-anchored day key (see normalizeDate)
+  status        String    @default("PRESENT") // PRESENT | LATE | HALF_DAY | ABSENT | LEAVE
+  firstInAt     DateTime?
+  lastOutAt     DateTime?
+  workedMinutes Int       @default(0)
+  method        String    @default("FACE") // FACE | MANUAL | QR
+  createdAt     DateTime  @default(now())
+  staff         Staff     @relation(fields: [staffId], references: [id])
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@unique([staffId, date])
+  @@index([tenantId, date])
 }
 
 model TimetableEntry {

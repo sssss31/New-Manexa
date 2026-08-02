@@ -437,3 +437,134 @@ export async function resolveUnknown(input: {
     detail: input.resolution,
   });
 }
+
+// ────────────────────────────────────────────────────────────────
+// Staff / employee face attendance (session-less "office kiosk" mode).
+// Matches a face against the tenant's STAFF gallery and records a daily
+// StaffAttendance punch (first-in / last-out / worked minutes). Reuses the
+// same quality + liveness (replay) gates and encrypted-embedding matching as
+// student recognition — no new trust surface.
+// ────────────────────────────────────────────────────────────────
+
+const STAFF_MATCH_THRESHOLD = 0.62; // cosine; office lighting is controlled
+const STAFF_LATE_AFTER_MIN = 9 * 60 + 30; // 09:30 IST workday start
+
+function istDayKey(d: Date): Date {
+  const ist = new Date(d.getTime() + 330 * 60_000);
+  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()));
+}
+function istMinutesOfDay(d: Date): number {
+  const ist = new Date(d.getTime() + 330 * 60_000);
+  return ist.getUTCHours() * 60 + ist.getUTCMinutes();
+}
+
+interface StaffGalleryEntry {
+  staffId: string;
+  name: string;
+  employeeCode: string;
+  department: string | null;
+  vectors: number[][];
+}
+
+async function loadStaffGallery(tenantId: string): Promise<StaffGalleryEntry[]> {
+  const profiles = await prisma.faceProfile.findMany({
+    where: { tenantId, subjectType: "STAFF", status: "ACTIVE", staff: { status: "ACTIVE" } },
+    include: { samples: { select: { embedding: true } }, staff: { include: { user: true } } },
+  });
+  return profiles
+    .filter((p) => p.staff && p.samples.length > 0)
+    .map((p) => ({
+      staffId: p.staffId!,
+      name: p.staff!.user.displayName,
+      employeeCode: p.staff!.employeeCode,
+      department: p.staff!.department,
+      vectors: p.samples.map((s) => decryptEmbedding(s.embedding)),
+    }));
+}
+
+export interface StaffRecognizeResult {
+  decision: "RECOGNIZED" | "LOW_CONFIDENCE" | "UNKNOWN" | "SPOOF_REJECTED" | "QUALITY_REJECTED";
+  confidence: number;
+  latencyMs: number;
+  staff?: { id: string; name: string; employeeCode: string; department: string | null };
+  attendance?: { status: string; firstInAt: string; lastOutAt: string; workedMinutes: number; punch: "IN" | "OUT" };
+}
+
+export async function recognizeStaff(input: {
+  tenantId: string;
+  actorId?: string;
+  descriptor: number[];
+  quality: QualityMetrics;
+  livenessScore: number;
+  deviceInfo?: string;
+}): Promise<StaffRecognizeResult> {
+  const started = performance.now();
+  const latency = () => Math.round(performance.now() - started);
+
+  const verdict = gradeQuality(input.quality);
+  if (!verdict.ok) return { decision: "QUALITY_REJECTED", confidence: 0, latencyMs: latency() };
+
+  const vec = l2normalize(input.descriptor);
+  if (!passesLiveness(`staff:${input.tenantId}`, vec, input.livenessScore)) {
+    return { decision: "SPOOF_REJECTED", confidence: 0, latencyMs: latency() };
+  }
+
+  const gallery = await loadStaffGallery(input.tenantId);
+  let best: { entry: StaffGalleryEntry; sim: number } | null = null;
+  for (const entry of gallery) {
+    for (const g of entry.vectors) {
+      const sim = cosineSimilarity(vec, g);
+      if (!best || sim > best.sim) best = { entry, sim };
+    }
+  }
+  const confidence = best ? Math.round(Math.max(0, best.sim) * 100) : 0;
+  if (!best || best.sim < STAFF_MATCH_THRESHOLD - 0.04) return { decision: "UNKNOWN", confidence, latencyMs: latency() };
+  if (best.sim < STAFF_MATCH_THRESHOLD) return { decision: "LOW_CONFIDENCE", confidence, latencyMs: latency() };
+
+  // Record / update today's rollup. First recognition = IN; later ones move
+  // last-out and accumulate worked minutes.
+  const now = new Date();
+  const date = istDayKey(now);
+  const existing = await prisma.staffAttendance.findUnique({
+    where: { staffId_date: { staffId: best.entry.staffId, date } },
+  });
+  let row;
+  let punch: "IN" | "OUT";
+  if (!existing) {
+    const status = istMinutesOfDay(now) > STAFF_LATE_AFTER_MIN ? "LATE" : "PRESENT";
+    row = await prisma.staffAttendance.create({
+      data: { tenantId: input.tenantId, staffId: best.entry.staffId, date, firstInAt: now, lastOutAt: now, status, method: "FACE" },
+    });
+    punch = "IN";
+  } else {
+    const worked = existing.firstInAt ? Math.max(0, Math.round((now.getTime() - existing.firstInAt.getTime()) / 60_000)) : 0;
+    row = await prisma.staffAttendance.update({
+      where: { id: existing.id },
+      data: { lastOutAt: now, workedMinutes: worked },
+    });
+    punch = "OUT";
+  }
+
+  await audit({
+    tenantId: input.tenantId,
+    actorId: input.actorId,
+    action: "STAFF_ATTENDANCE_FACE",
+    entity: "StaffAttendance",
+    entityId: row.id,
+    detail: `${best.entry.name} · ${punch} · ${confidence}%`,
+  });
+
+  return {
+    decision: "RECOGNIZED",
+    confidence,
+    latencyMs: latency(),
+    staff: { id: best.entry.staffId, name: best.entry.name, employeeCode: best.entry.employeeCode, department: best.entry.department },
+    attendance: {
+      status: row.status,
+      firstInAt: (row.firstInAt ?? now).toISOString(),
+      lastOutAt: (row.lastOutAt ?? now).toISOString(),
+      workedMinutes: row.workedMinutes,
+      punch,
+    },
+  };
+}

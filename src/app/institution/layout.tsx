@@ -40,6 +40,7 @@ export default async function InstitutionLayout({ children }: { children: React.
         { section: "AI", href: "/institution/assistant", label: "Assistant", icon: <IconLead /> },
         { section: "Face Attendance", href: "/institution/face", label: "Face Dashboard", icon: <IconClipboard /> },
         { section: "Face Attendance", href: "/institution/face/enroll", label: "Enrolment", icon: <IconUsers /> },
+        { section: "Face Attendance", href: "/institution/staff-attendance", label: "Staff Attendance", icon: <IconClipboard /> },
         { section: "Face Attendance", href: "/institution/face/reports", label: "Reports", icon: <IconChart /> },
         { section: "Face Attendance", href: "/institution/face/unknown", label: "Unknown faces", icon: <IconShield /> },
         { section: "Face Attendance", href: "/institution/face/logs", label: "Recognition logs", icon: <IconLog /> },
