@@ -4,6 +4,7 @@ import { Logo } from "@/components/Logo";
 import { getCurrentUser, roleHome } from "@/lib/auth";
 import { INSTITUTION_TYPES, JOINABLE_ROLES } from "@/lib/tenancy";
 import { createInstitutionAction, joinInstitutionAction } from "./actions";
+import { RegistrationWizard } from "@/components/auth/RegistrationWizard";
 
 export default async function SignupPage({ searchParams }: { searchParams: Promise<{ tab?: string; err?: string }> }) {
   const { tab = "create", err } = await searchParams;
@@ -43,37 +44,11 @@ export default async function SignupPage({ searchParams }: { searchParams: Promi
             </Link>
           </div>
 
-          {err && <div className="badge badge-error w-full py-2 justify-center mb-4">{decodeURIComponent(err)}</div>}
+          {err && !isCreate && <div className="badge badge-error w-full py-2 justify-center mb-4">{decodeURIComponent(err)}</div>}
 
           <div className="card p-6">
             {isCreate ? (
-              <form action={createInstitutionAction} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="md:col-span-2">
-                    <label className="label">Institution name</label>
-                    <input className="input" name="institutionName" placeholder="St. John's Academy" required />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="label">Institution type</label>
-                    <select className="select" name="type" defaultValue="SCHOOL" required>
-                      {INSTITUTION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                    </select>
-                  </div>
-                  <div><label className="label">Owner name</label><input className="input" name="ownerName" required /></div>
-                  <div><label className="label">Owner mobile</label><input className="input" name="ownerMobile" placeholder="+91…" required /></div>
-                  <div className="md:col-span-2"><label className="label">Owner email</label><input className="input" name="ownerEmail" type="email" required /></div>
-                  <div><label className="label">Country</label><input className="input" name="country" defaultValue="India" /></div>
-                  <div><label className="label">State</label><input className="input" name="state" /></div>
-                  <div><label className="label">City</label><input className="input" name="city" /></div>
-                  <div><label className="label">Website (optional)</label><input className="input" name="website" placeholder="https://…" /></div>
-                  <div><label className="label">Password</label><input className="input" name="password" type="password" required /></div>
-                  <div><label className="label">Confirm password</label><input className="input" name="confirm" type="password" required /></div>
-                </div>
-                <p className="text-xs text-muted">
-                  We generate your Institution ID (e.g. <span className="font-mono text-accent">MAN-SCH-100001</span>) and set up a default academic session, classes, and role permissions automatically.
-                </p>
-                <button className="btn-primary w-full">Create institution &amp; owner account</button>
-              </form>
+              <RegistrationWizard types={INSTITUTION_TYPES.map((t) => ({ value: t.value, label: t.label }))} action={createInstitutionAction} err={err} />
             ) : (
               <form action={joinInstitutionAction} className="space-y-4">
                 <div>

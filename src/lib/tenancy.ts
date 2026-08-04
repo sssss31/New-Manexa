@@ -2,9 +2,11 @@
 // creation with owner bootstrap + default provisioning, and join-existing.
 // Every write is a transaction so a half-provisioned tenant never persists.
 
+import { randomBytes } from "crypto";
 import { prisma } from "./prisma";
 import { hashPassword } from "./auth";
 import { audit } from "./audit";
+import { notify } from "./notify";
 import { ensurePermissionCatalog, seedTenantPermissions } from "./permissions";
 import { getBillingState } from "./billing";
 import { nextSequence } from "./sequence";
@@ -83,6 +85,10 @@ export interface CreateInstitutionInput {
   logoUrl?: string;
 }
 
+// Opaque unique id (cuid-shaped) generated in-process so we can batch classes
+// and their sections with createMany — no round-trip to read ids back.
+const cid = () => "c" + randomBytes(12).toString("hex");
+
 export async function createInstitution(input: CreateInstitutionInput) {
   const email = input.ownerEmail.trim().toLowerCase();
   const existing = await prisma.user.findUnique({ where: { email } });
@@ -96,64 +102,81 @@ export async function createInstitution(input: CreateInstitutionInput) {
   const year = new Date().getFullYear();
   const academicYear = `${year}-${year + 1}`;
 
-  const result = await prisma.$transaction(async (tx) => {
-    const institutionId = await generateInstitutionId(input.type, tx);
-    const subdomain = await uniqueSubdomain(input.institutionName, tx);
+  // Generate the institution ID + subdomain OUTSIDE the transaction. The atomic
+  // counter (generateInstitutionId) and the tenant unique constraints are the
+  // real guards — doing this inside the tx added round-trips that, at real
+  // pooler latency, blew past Prisma's 5s interactive-transaction timeout and
+  // failed every signup ("Transaction already closed"). This is the root-cause
+  // fix: keep the transaction tiny (5 round-trips) and give it real headroom.
+  const institutionId = await generateInstitutionId(input.type);
+  const subdomain = await uniqueSubdomain(input.institutionName, prisma);
 
-    const tenant = await tx.tenant.create({
-      data: {
-        institutionId,
-        name: input.institutionName,
-        subdomain,
-        code: institutionId.split("-").slice(1).join(""),
-        type: input.type,
-        country: input.country ?? "India",
-        state: input.state,
-        city: input.city,
-        website: input.website,
-        email,
-        academicYear,
-        status: "ACTIVE",
-        // 14-day trial by default; billing later attaches a real plan.
-        subscriptionExpiry: new Date(Date.now() + 14 * 24 * 3600 * 1000),
-        primaryColor: "#B6FF2A",
-      },
-    });
+  // A starter set of classes with one section each, so the institution is
+  // immediately usable. Pre-assign ids so both createMany calls are batched.
+  const defaultClasses =
+    input.type === "SCHOOL"
+      ? ["Class I", "Class II", "Class III", "Class IV", "Class V"]
+      : input.type === "COACHING"
+      ? ["Batch A", "Batch B", "Batch C"]
+      : ["Year 1", "Year 2", "Year 3"];
+  const classes = defaultClasses.map((name) => ({ id: cid(), name }));
 
-    const owner = await tx.user.create({
-      data: {
-        email,
-        phone: input.ownerMobile,
-        passwordHash,
-        displayName: input.ownerName,
-        role: "INSTITUTION_ADMIN", // institution owner / super admin of their org
-        status: "ACTIVE",
-        provider: "LOCAL",
-        emailVerifiedAt: new Date(), // self-serve owner is trusted on creation
-        tenantId: tenant.id,
-      },
-    });
+  const result = await prisma.$transaction(
+    async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: {
+          institutionId,
+          name: input.institutionName,
+          subdomain,
+          code: institutionId.split("-").slice(1).join(""),
+          type: input.type,
+          country: input.country ?? "India",
+          state: input.state,
+          city: input.city,
+          website: input.website,
+          email,
+          academicYear,
+          status: "ACTIVE",
+          // 14-day trial by default; billing later attaches a real plan.
+          subscriptionExpiry: new Date(Date.now() + 14 * 24 * 3600 * 1000),
+          primaryColor: "#B6FF2A",
+        },
+      });
 
-    await tx.tenant.update({ where: { id: tenant.id }, data: { ownerId: owner.id } });
+      const owner = await tx.user.create({
+        data: {
+          email,
+          phone: input.ownerMobile,
+          passwordHash,
+          displayName: input.ownerName,
+          role: "INSTITUTION_ADMIN", // institution owner / super admin of their org
+          status: "ACTIVE",
+          provider: "LOCAL",
+          emailVerifiedAt: new Date(), // self-serve owner is trusted on creation
+          tenantId: tenant.id,
+        },
+      });
 
-    // ---- Default provisioning ----
-    // A starter set of classes with one section each, so the institution is
-    // immediately usable (students can be admitted, timetables built).
-    const defaultClasses =
-      input.type === "SCHOOL"
-        ? ["Class I", "Class II", "Class III", "Class IV", "Class V"]
-        : input.type === "COACHING"
-        ? ["Batch A", "Batch B", "Batch C"]
-        : ["Year 1", "Year 2", "Year 3"];
-    for (const name of defaultClasses) {
-      const cls = await tx.class.create({ data: { tenantId: tenant.id, name } });
-      await tx.section.create({ data: { tenantId: tenant.id, classId: cls.id, name: "A", capacity: 40 } });
-    }
+      await tx.tenant.update({ where: { id: tenant.id }, data: { ownerId: owner.id } });
 
-    return { tenant, owner };
-  });
+      // Batched provisioning — 2 round-trips for all classes + sections
+      // (was 2 per class in a loop).
+      await tx.class.createMany({
+        data: classes.map((c) => ({ id: c.id, tenantId: tenant.id, name: c.name })),
+      });
+      await tx.section.createMany({
+        data: classes.map((c) => ({ tenantId: tenant.id, classId: c.id, name: "A", capacity: 40 })),
+      });
 
-  // Default role permissions (outside the tx to keep it short; idempotent).
+      return { tenant, owner };
+    },
+    // Generous headroom for pooler latency; the body is only 5 round-trips so
+    // this is a safety margin, not a crutch.
+    { timeout: 20_000, maxWait: 10_000 }
+  );
+
+  // Idempotent provisioning outside the tx (can() falls back to the default
+  // matrix if this ever fails, so it never blocks the owner from working).
   await seedTenantPermissions(result.tenant.id);
 
   await audit({
@@ -164,6 +187,16 @@ export async function createInstitution(input: CreateInstitutionInput) {
     entityId: result.tenant.id,
     detail: `${result.tenant.institutionId} · ${input.type}`,
   });
+
+  // Welcome notification (best-effort; push fan-out is deferred inside notify).
+  await notify({
+    tenantId: result.tenant.id,
+    userId: result.owner.id,
+    kind: "system",
+    title: "Welcome to MANEXA 🎉",
+    body: `${result.tenant.name} is ready. Your Institution ID is ${result.tenant.institutionId} — share it so staff and parents can join.`,
+    href: "/institution",
+  }).catch(() => {});
 
   return result;
 }
