@@ -31,6 +31,7 @@ export default async function InstitutionCockpit() {
     recentNotices,
     recentAudit,
     upcomingExams,
+    pendingJoins,
   ] = await Promise.all([
     prisma.student.count({ where: { tenantId, status: "ACTIVE" } }),
     prisma.staff.count({ where: { tenantId, status: "ACTIVE" } }),
@@ -55,6 +56,7 @@ export default async function InstitutionCockpit() {
       take: 6,
       include: { class: true, subject: true },
     }),
+    prisma.user.count({ where: { tenantId, status: "PENDING" } }),
   ]);
   const totalMarked = presentToday + absentToday;
   const attendancePct = totalMarked ? Math.round((presentToday / totalMarked) * 100) : 0;
@@ -118,6 +120,27 @@ export default async function InstitutionCockpit() {
       <div className="relative z-[1]">
         <BillingBanner tenantId={tenantId} />
       </div>
+
+      {/* Pending join requests — approval center entry point */}
+      {pendingJoins > 0 && (
+        <Link
+          href="/institution/join-requests"
+          className="relative z-[1] mb-6 flex items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/[0.07] p-4 transition-colors hover:bg-warning/10"
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-warning/15 text-warning">
+              <UserPlus size={18} />
+            </span>
+            <div>
+              <div className="text-sm font-semibold text-fg">
+                {pendingJoins} join request{pendingJoins === 1 ? "" : "s"} awaiting approval
+              </div>
+              <div className="text-xs text-muted">Teachers, staff or parents want to join — review &amp; onboard them.</div>
+            </div>
+          </div>
+          <span className="btn-secondary text-xs whitespace-nowrap">Open Approval Center →</span>
+        </Link>
+      )}
 
       {/* KPI grid */}
       <RevealGroup className="relative z-[1] grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">

@@ -61,6 +61,7 @@ export default async function InstitutionLayout({ children }: { children: React.
         { section: "Engagement", href: "/institution/automations", label: "Automation Engine", icon: <IconWorkflow /> },
         { section: "Documents", href: "/institution/certificates", label: "Certificates & ID cards", icon: <IconExam /> },
         { section: "System", href: "/institution/staff", label: "Staff (HR)", icon: <IconUsers /> },
+        { section: "System", href: "/institution/join-requests", label: "Join Requests", icon: <IconShield /> },
         { section: "System", href: "/institution/reports", label: "Reports", icon: <IconChart /> },
         { section: "System", href: "/institution/roles", label: "Roles & permissions", icon: <IconShield /> },
         { section: "System", href: "/institution/integrations", label: "Integrations", icon: <IconWorkflow /> },

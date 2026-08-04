@@ -13,6 +13,8 @@ import {
   runPayroll,
   approvePayroll,
   disbursePayroll,
+  approveJoinRequest,
+  rejectJoinRequest,
 } from "@/lib/engine";
 import { audit } from "@/lib/audit";
 import { notify } from "@/lib/notify";
@@ -318,4 +320,32 @@ export async function createEventAction(formData: FormData) {
   });
   await audit({ tenantId: a.tenantId!, actorId: a.id, action: "EVENT_CREATE", entity: "Event", entityId: e.id, detail: title });
   revalidatePath("/institution/events");
+}
+
+// ---- Join Requests / Workforce Onboarding ----
+
+export async function approveJoinAction(formData: FormData) {
+  const a = await actor("settings.manage");
+  await approveJoinRequest({
+    tenantId: a.tenantId!,
+    actorId: a.id,
+    userId: String(formData.get("userId")),
+    department: String(formData.get("department") || "") || undefined,
+    designation: String(formData.get("designation") || "") || undefined,
+  });
+  revalidatePath("/institution/join-requests");
+  revalidatePath("/institution");
+}
+
+export async function rejectJoinAction(formData: FormData) {
+  const a = await actor("settings.manage");
+  const reason = String(formData.get("reason") || "").trim() || "No reason provided";
+  await rejectJoinRequest({
+    tenantId: a.tenantId!,
+    actorId: a.id,
+    userId: String(formData.get("userId")),
+    reason,
+  });
+  revalidatePath("/institution/join-requests");
+  revalidatePath("/institution");
 }

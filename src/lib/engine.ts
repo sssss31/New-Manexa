@@ -857,3 +857,101 @@ export async function createUser(input: {
   });
   return u;
 }
+
+// ---- WORKFORCE ONBOARDING / JOIN-REQUEST APPROVAL ----
+// A self-service join creates a PENDING user (+ its Staff/Parent record) that
+// cannot sign in until an institution admin approves it here. These are the
+// approve/reject halves of that lifecycle — tenant-guarded, transactional,
+// audited, and notified.
+
+export async function approveJoinRequest(input: {
+  tenantId: string;
+  actorId: string;
+  userId: string;
+  department?: string;
+  designation?: string;
+}) {
+  // Tenant guard: the target MUST be a PENDING user of THIS tenant.
+  const user = await ownedOrThrow<{ id: string; role: string; email: string; displayName: string }>(
+    prisma.user,
+    { id: input.userId, tenantId: input.tenantId, status: "PENDING" }
+  );
+
+  // Seat gate for staff roles (a pending teacher shouldn't be activatable past
+  // the plan's staff cap).
+  const STAFF_ROLES = new Set(["TEACHER", "HR", "LIBRARIAN", "TRANSPORT_MGR", "ACCOUNTANT", "PRINCIPAL", "STAFF"]);
+  if (STAFF_ROLES.has(user.role)) await assertSeat(input.tenantId, "staff");
+
+  // Activate + (optionally) place them in a department/designation atomically.
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: user.id },
+      data: { status: "ACTIVE", emailVerifiedAt: new Date() },
+    });
+    if (input.department || input.designation) {
+      await tx.staff.updateMany({
+        where: { userId: user.id, tenantId: input.tenantId },
+        data: {
+          ...(input.department ? { department: input.department } : {}),
+          ...(input.designation ? { designation: input.designation } : {}),
+        },
+      });
+    }
+  });
+
+  await audit({
+    tenantId: input.tenantId,
+    actorId: input.actorId,
+    action: "JOIN_APPROVE",
+    entity: "User",
+    entityId: user.id,
+    detail: `${user.role} · ${user.email}${input.department ? ` · ${input.department}` : ""}`,
+  });
+
+  // Role permissions already apply via the tenant's RBAC matrix; the account is
+  // now eligible for face enrolment. Tell them they can sign in.
+  await notify({
+    tenantId: input.tenantId,
+    userId: user.id,
+    kind: "system",
+    title: "Your account is approved 🎉",
+    body: "An admin approved your request to join. You can now sign in to MANEXA.",
+    href: "/login",
+  }).catch(() => {});
+
+  return user;
+}
+
+export async function rejectJoinRequest(input: {
+  tenantId: string;
+  actorId: string;
+  userId: string;
+  reason: string;
+}) {
+  const user = await ownedOrThrow<{ id: string; role: string; email: string; displayName: string }>(
+    prisma.user,
+    { id: input.userId, tenantId: input.tenantId, status: "PENDING" }
+  );
+
+  // Audit the rejection (with reason) BEFORE removing the account.
+  await audit({
+    tenantId: input.tenantId,
+    actorId: input.actorId,
+    action: "JOIN_REJECT",
+    entity: "User",
+    entityId: user.id,
+    detail: `${user.role} · ${user.email} · reason: ${input.reason}`,
+  });
+
+  // Remove the pending account + its role record so the email frees up and the
+  // person can submit a fresh request later. No partial data left behind.
+  await prisma.$transaction(async (tx) => {
+    await tx.staff.deleteMany({ where: { userId: user.id, tenantId: input.tenantId } });
+    await tx.parent.deleteMany({ where: { userId: user.id, tenantId: input.tenantId } });
+    await tx.notification.deleteMany({ where: { userId: user.id } });
+    await tx.session.deleteMany({ where: { userId: user.id } });
+    await tx.user.delete({ where: { id: user.id } });
+  });
+
+  return user;
+}
