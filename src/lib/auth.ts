@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { after } from "next/server";
 import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
@@ -6,6 +7,22 @@ import { randomBytes } from "crypto";
 
 export const COOKIE = "manexa_session";
 const DAY = 24 * 60 * 60 * 1000;
+
+// bcrypt work factor. 11 (~130ms) meets the <250ms login target with a strong
+// margin; raise via BCRYPT_COST if the target is relaxed. Old hashes verify at
+// whatever cost they were created with (cost is embedded in the hash).
+const BCRYPT_COST = Math.min(15, Math.max(10, Number(process.env.BCRYPT_COST ?? 11)));
+
+// Run a side-effect after the response is flushed when inside a request scope;
+// otherwise (scripts/seed) just fire it. Keeps non-critical writes off the
+// login critical path.
+function afterResponse(fn: () => void | Promise<void>) {
+  try {
+    after(fn);
+  } catch {
+    void Promise.resolve(fn()).catch(() => {});
+  }
+}
 
 export type Role =
   | "SUPER_ADMIN"
@@ -20,9 +37,7 @@ export type Role =
   | "HR";
 
 export async function hashPassword(pw: string) {
-  // Cost 12 = current OWASP baseline. Old cost-10 hashes keep verifying
-  // (bcrypt embeds the cost in the hash) and upgrade on next password change.
-  return bcrypt.hash(pw, 12);
+  return bcrypt.hash(pw, BCRYPT_COST);
 }
 
 /**
@@ -53,6 +68,7 @@ export async function verifyPassword(pw: string, hash: string) {
 export async function createSession(userId: string) {
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 14 * DAY);
+  // Only the session row is on the critical path — the cookie needs its token.
   await prisma.session.create({ data: { userId, token, expiresAt } });
   const store = await cookies();
   store.set(COOKIE, token, {
@@ -63,9 +79,9 @@ export async function createSession(userId: string) {
     expires: expiresAt,
     path: "/",
   });
-  await prisma.user.update({
-    where: { id: userId },
-    data: { lastLoginAt: new Date() },
+  // last-login is analytics, not auth — update it after the response ships.
+  afterResponse(() => {
+    prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } }).catch(() => {});
   });
   return token;
 }

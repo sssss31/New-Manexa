@@ -70,16 +70,20 @@ function warnOnce() {
 async function dbAllow(key: string, limit: number, windowMs: number): Promise<boolean> {
   const since = new Date(Date.now() - windowMs);
   try {
-    const recent = await prisma.rateLimitHit.count({ where: { key, at: { gte: since } } });
-    if (recent >= limit) return false;
-    await prisma.rateLimitHit.create({ data: { key } });
-    // Opportunistic prune (~4% of calls) so the table doesn't grow unbounded.
+    // ONE network round-trip: record this hit and count the window together
+    // (batched $transaction). Two separate awaits used to cost 2 round-trips.
+    const [, recent] = await prisma.$transaction([
+      prisma.rateLimitHit.create({ data: { key } }),
+      prisma.rateLimitHit.count({ where: { key, at: { gte: since } } }),
+    ]);
+    // Opportunistic prune (~4%), fire-and-forget so it never adds latency.
     if (Math.random() < 0.04) {
-      await prisma.rateLimitHit
+      prisma.rateLimitHit
         .deleteMany({ where: { at: { lt: new Date(Date.now() - 24 * 3600_000) } } })
         .catch(() => {});
     }
-    return true;
+    // `recent` includes the row we just inserted, so > limit means over budget.
+    return recent <= limit;
   } catch {
     // DB unavailable → fall back to in-memory rather than lock everyone out.
     return memoryAllow(key, limit, windowMs);

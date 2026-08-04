@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createSession, destroySession, roleHome, verifyPassword } from "@/lib/auth";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
@@ -21,30 +22,43 @@ export async function loginAction(formData: FormData) {
   const password = String(formData.get("password") ?? "");
 
   try {
-    // Brute-force protection: 5 attempts / 5 minutes per account.
-    if (!(await checkRateLimit(`login:${email}`, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs, { durable: true }))) {
-      await audit({ action: "LOGIN_LOCKED", entity: "User", detail: email });
+    // Round-trip 1: the rate-limit gate and the user lookup are independent, so
+    // fire them concurrently — one round-trip of wall time instead of two.
+    // (Brute-force protection: 5 attempts / 5 minutes per account.)
+    const [allowed, user] = await Promise.all([
+      checkRateLimit(`login:${email}`, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs, { durable: true }),
+      prisma.user.findUnique({ where: { email } }),
+    ]);
+
+    if (!allowed) {
+      after(() => audit({ action: "LOGIN_LOCKED", entity: "User", detail: email }));
       redirect("/login?err=locked");
     }
-
-    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      await audit({ action: "LOGIN_FAILED", entity: "User", detail: email });
+      after(() => audit({ action: "LOGIN_FAILED", entity: "User", detail: email }));
       redirect("/login?err=invalid");
     }
     // Pending joins can't sign in until an institution admin approves them.
     if (user.status === "PENDING") redirect("/login?err=pending");
     if (user.status !== "ACTIVE") redirect("/login?err=invalid");
 
+    // Password verify (CPU) — capture request headers now (headers() can't be
+    // read inside after()).
     const ok = await verifyPassword(password, user.passwordHash);
     const meta = await clientMeta();
     if (!ok) {
-      await prisma.loginEvent.create({ data: { userId: user.id, tenantId: user.tenantId, ...meta, outcome: "FAILED" } });
-      await audit({ tenantId: user.tenantId, action: "LOGIN_FAILED", entity: "User", entityId: user.id, detail: email });
+      after(() => {
+        prisma.loginEvent.create({ data: { userId: user.id, tenantId: user.tenantId, ...meta, outcome: "FAILED" } }).catch(() => {});
+        audit({ tenantId: user.tenantId, action: "LOGIN_FAILED", entity: "User", entityId: user.id, detail: email });
+      });
       redirect("/login?err=invalid");
     }
-    await prisma.loginEvent.create({ data: { userId: user.id, tenantId: user.tenantId, ...meta, outcome: "SUCCESS" } });
+    // Round-trip 2: create the session (the cookie needs its token — sync).
     await createSession(user.id);
+    // Analytics write is deferred so it never blocks the redirect.
+    after(() => {
+      prisma.loginEvent.create({ data: { userId: user.id, tenantId: user.tenantId, ...meta, outcome: "SUCCESS" } }).catch(() => {});
+    });
     redirect(roleHome(user.role));
   } catch (e) {
     // redirect()/notFound() throw control-flow errors — let them through.
