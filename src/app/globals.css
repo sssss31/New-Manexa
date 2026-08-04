@@ -161,6 +161,40 @@ h1, h2, h3 {
 .textarea { @apply min-h-[96px] resize-y; }
 .label { @apply block text-xs uppercase tracking-wider text-muted mb-1.5 font-medium; }
 
+/* ─────────────── Auth (premium sign-in / sign-up) ─────────────── */
+/* Brand-gradient CTA — the ONE place the two brand greens combine. */
+.auth-cta {
+  @apply w-full inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed;
+  background: linear-gradient(135deg, #b6ff2a 0%, #00ff9c 100%);
+  color: #04140a;
+  box-shadow: 0 8px 30px -10px rgba(182, 255, 42, 0.5);
+}
+.auth-cta:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(0, 255, 156, 0.55), 0 16px 44px -10px rgba(182, 255, 42, 0.7);
+}
+.auth-cta:active:not(:disabled) { transform: translateY(0); }
+.auth-cta:disabled { opacity: 0.6; box-shadow: none; transform: none; }
+
+/* Glass field with focus glow. Floating label handled in the component. */
+.auth-input {
+  @apply w-full rounded-xl border border-border bg-elevated/60 py-3 pl-10 pr-3 text-sm text-fg outline-none transition-all placeholder:text-transparent;
+}
+.auth-input:focus { border-color: rgb(var(--accent) / 0.6); box-shadow: 0 0 0 3px rgb(var(--accent) / 0.12); }
+.auth-input[aria-invalid="true"] { border-color: rgb(var(--error) / 0.6); }
+.auth-input[aria-invalid="true"]:focus { box-shadow: 0 0 0 3px rgb(var(--error) / 0.12); }
+
+.auth-float-label {
+  @apply pointer-events-none absolute left-10 top-1/2 -translate-y-1/2 text-sm text-subtle transition-all duration-150;
+}
+.peer:focus ~ .auth-float-label,
+.peer:not(:placeholder-shown) ~ .auth-float-label {
+  @apply left-2.5 top-0 -translate-y-1/2 rounded bg-elevated px-1 text-[11px] text-accent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth-cta, .auth-input, .auth-float-label { transition: none; }
+}
+
 /* ---- Badges ---- */
 .badge {
   @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-medium border;

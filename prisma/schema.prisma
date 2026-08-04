@@ -93,12 +93,27 @@ model User {
   loginEvents     LoginEvent[]
   parent          Parent?
   sessions        Session[]
+  resetTokens     PasswordResetToken[]
   pushSubs        PushSubscription[]
   staff           Staff?
   student         Student?
   tenant          Tenant?      @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId, role])
+}
+
+// Password-reset tokens (single-use, short-lived). Email delivery is simulated
+// locally (the reset link is logged) as with the other external services.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // Web Push (VAPID) subscriptions — one row per browser/device that opted in.

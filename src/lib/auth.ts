@@ -65,7 +65,8 @@ export async function verifyPassword(pw: string, hash: string) {
   return bcrypt.compare(pw, hash);
 }
 
-export async function createSession(userId: string) {
+export async function createSession(userId: string, opts?: { remember?: boolean }) {
+  const remember = opts?.remember ?? true;
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 14 * DAY);
   // Only the session row is on the critical path — the cookie needs its token.
@@ -76,7 +77,9 @@ export async function createSession(userId: string) {
     sameSite: "lax",
     // HTTPS-only in production so the 14-day token never crosses plain HTTP.
     secure: process.env.NODE_ENV === "production",
-    expires: expiresAt,
+    // "Remember me": a persistent 14-day cookie. Otherwise a session cookie
+    // that clears when the browser closes (the DB row still expires in 14d).
+    ...(remember ? { expires: expiresAt } : {}),
     path: "/",
   });
   // last-login is analytics, not auth — update it after the response ships.

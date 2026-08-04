@@ -54,7 +54,8 @@ export async function loginAction(formData: FormData) {
       redirect("/login?err=invalid");
     }
     // Round-trip 2: create the session (the cookie needs its token — sync).
-    await createSession(user.id);
+    // "Remember me" (checkbox → "on") controls cookie persistence.
+    await createSession(user.id, { remember: formData.get("remember") === "on" });
     // Analytics write is deferred so it never blocks the redirect.
     after(() => {
       prisma.loginEvent.create({ data: { userId: user.id, tenantId: user.tenantId, ...meta, outcome: "SUCCESS" } }).catch(() => {});
