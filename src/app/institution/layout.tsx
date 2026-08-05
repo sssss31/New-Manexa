@@ -48,6 +48,7 @@ export default async function InstitutionLayout({ children }: { children: React.
         { section: "Face Attendance", href: "/institution/face/settings", label: "Settings", icon: <IconGear /> },
         { section: "Lifecycle", href: "/institution/leads", label: "Leads & Admission", icon: <IconLead /> },
         { section: "Lifecycle", href: "/institution/students", label: "Students (SIS)", icon: <IconUsers /> },
+        { section: "Lifecycle", href: "/institution/import", label: "Bulk Import", icon: <IconClipboard /> },
         { section: "Academics", href: "/institution/classes", label: "Classes & Sections", icon: <IconBuilding /> },
         { section: "Academics", href: "/institution/subjects", label: "Subjects & Timetable", icon: <IconCalendar /> },
         { section: "Academics", href: "/institution/exams", label: "Exams & Results", icon: <IconGrad /> },
