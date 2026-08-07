@@ -401,8 +401,11 @@ async function nextInvoiceNo(tenantId: string) {
 export async function payInvoice(input: {
   tenantId: string;
   invoiceId: string;
-  method: "UPI" | "CARD" | "NETBANKING" | "CASH" | "CHEQUE";
+  method: "UPI" | "CARD" | "NETBANKING" | "CASH" | "CHEQUE" | "RAZORPAY";
   actorId?: string;
+  // Real gateway reference (e.g. a Razorpay payment id) when the payment came
+  // through an online gateway; falls back to a generated id for offline modes.
+  gatewayTxId?: string;
 }) {
   const inv = await prisma.invoice.findFirst({
     where: { id: input.invoiceId, tenantId: input.tenantId },
@@ -410,7 +413,7 @@ export async function payInvoice(input: {
   });
   if (!inv) throw new Error("Invoice not found");
   if (inv.status === "PAID") throw new Error("Already paid");
-  const gatewayTxId = `pay_${Math.random().toString(36).slice(2, 12)}`;
+  const gatewayTxId = input.gatewayTxId ?? `pay_${Math.random().toString(36).slice(2, 12)}`;
   // Atomic claim BEFORE recording the payment: a concurrent double-submit
   // (double-click / retry) loses this conditional update and throws, instead
   // of creating a second Payment row for the same invoice (TOCTOU).

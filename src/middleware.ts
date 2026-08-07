@@ -4,13 +4,19 @@ const isProd = process.env.NODE_ENV === "production";
 
 // Defense-in-depth headers (SAD §8). CSP allows inline styles for Tailwind's
 // generated rules and dev-mode eval for React Refresh.
+// Razorpay checkout loads a script + opens iframes + calls its API. These
+// allowlist entries are harmless when online payments are disabled.
+const RZP_SCRIPT = "https://checkout.razorpay.com";
+const RZP_FRAME = "https://api.razorpay.com https://checkout.razorpay.com";
+const RZP_CONNECT = "https://api.razorpay.com https://*.razorpay.com https://lumberjack.razorpay.com";
 const CSP = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isProd ? "" : " 'unsafe-eval'"}`,
+  `script-src 'self' 'unsafe-inline' ${RZP_SCRIPT}${isProd ? "" : " 'unsafe-eval'"}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  "img-src 'self' data: blob: https://*.razorpay.com",
   "font-src 'self' data:",
-  `connect-src 'self'${isProd ? "" : " ws:"}`,
+  `connect-src 'self' ${RZP_CONNECT}${isProd ? "" : " ws:"}`,
+  `frame-src 'self' ${RZP_FRAME}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

@@ -39,6 +39,12 @@ const schema = z.object({
   UPSTASH_REDIS_REST_URL: z.string().url().optional(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(20).optional(),
 
+  // Razorpay online payments. BOTH must be set to enable live fee collection;
+  // otherwise the app keeps the simulated offline payment flow. Public key id
+  // is exposed to the checkout; the secret signs orders + verifies callbacks.
+  NEXT_PUBLIC_RAZORPAY_KEY_ID: z.string().min(10).optional(),
+  RAZORPAY_KEY_SECRET: z.string().min(10).optional(),
+
   // Web Push (VAPID). Public key is exposed to the browser to subscribe; the
   // private key signs push messages server-side. BOTH must be set to enable
   // push; otherwise the app runs fine without phone notifications. Generate

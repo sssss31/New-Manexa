@@ -1,8 +1,11 @@
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth";
 import { EmptyState, PageHeader, SectionCard, Stat, StatusBadge } from "@/components/ui";
 import { loadParentChildren } from "@/lib/parent-data";
 import { inr, dateShort } from "@/lib/format";
+import { razorpayEnabled } from "@/lib/payments/razorpay";
+import { RazorpayPayButton } from "@/components/payments/RazorpayPayButton";
 import { payInvoiceAsParent } from "../actions";
 
 export default async function ParentFees() {
@@ -19,6 +22,7 @@ export default async function ParentFees() {
   const paid = invoices.filter((i) => i.status === "PAID");
   const totalDue = due.reduce((s, i) => s + i.total, 0);
   const totalPaid = paid.reduce((s, i) => s + i.total, 0);
+  const online = razorpayEnabled();
   return (
     <>
       <PageHeader title="Fees & payments" sub={kid.user.displayName} />
@@ -52,13 +56,27 @@ export default async function ParentFees() {
                   </div>
                 ))}
               </div>
-              <form action={payInvoiceAsParent} className="mt-3 flex gap-2 justify-end">
-                <input type="hidden" name="invoiceId" value={i.id} />
-                <select name="method" className="select w-32 text-xs">
-                  <option value="UPI">UPI</option><option value="CARD">Card</option><option value="NETBANKING">Net-banking</option>
-                </select>
-                <button className="btn-primary text-sm">Pay {inr(i.total)}</button>
-              </form>
+              <div className="mt-3 flex items-center justify-end gap-2">
+                {online ? (
+                  // Live gateway — real card / UPI / net-banking via Razorpay.
+                  <RazorpayPayButton
+                    invoiceId={i.id}
+                    amountLabel={inr(i.total)}
+                    prefillEmail={user.email}
+                    prefillContact={user.phone ?? undefined}
+                    className="btn-primary text-sm"
+                  />
+                ) : (
+                  // Fallback (no gateway configured) — record an offline payment.
+                  <form action={payInvoiceAsParent} className="flex gap-2">
+                    <input type="hidden" name="invoiceId" value={i.id} />
+                    <select name="method" className="select w-32 text-xs">
+                      <option value="UPI">UPI</option><option value="CARD">Card</option><option value="NETBANKING">Net-banking</option>
+                    </select>
+                    <button className="btn-primary text-sm">Pay {inr(i.total)}</button>
+                  </form>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -67,7 +85,7 @@ export default async function ParentFees() {
       <SectionCard title="Payment history" className="mt-4">
         {paid.length === 0 && <div className="text-sm text-muted">No payments yet.</div>}
         <table className="w-full">
-          <thead><tr><th className="th">#</th><th className="th">Period</th><th className="th">Amount</th><th className="th">Paid on</th></tr></thead>
+          <thead><tr><th className="th">#</th><th className="th">Period</th><th className="th">Amount</th><th className="th">Paid on</th><th className="th">Receipt</th></tr></thead>
           <tbody>
             {paid.map((p) => (
               <tr key={p.id} className="row-hover">
@@ -75,6 +93,7 @@ export default async function ParentFees() {
                 <td className="td">{p.periodLabel}</td>
                 <td className="td tabular-nums">{inr(p.total)}</td>
                 <td className="td text-muted">{p.paidAt ? dateShort(p.paidAt) : "—"}</td>
+                <td className="td"><Link href={`/receipt/${p.id}`} className="text-accent text-xs hover:underline">View</Link></td>
               </tr>
             ))}
           </tbody>
