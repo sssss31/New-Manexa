@@ -192,12 +192,19 @@ model RolePermission {
 }
 
 model Session {
-  id        String   @id @default(cuid())
-  userId    String
-  token     String   @unique
-  createdAt DateTime @default(now())
-  expiresAt DateTime
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  userId     String
+  token      String   @unique
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  // Device/network fingerprint for the "Active sessions" security screen.
+  // All optional so old rows keep working; captured at sign-in.
+  ip         String?
+  userAgent  String?
+  lastSeenAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Lead {

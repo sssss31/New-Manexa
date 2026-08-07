@@ -95,7 +95,7 @@ export async function createInstitutionAction(formData: FormData) {
   try {
     const meta = await clientMeta();
     await prisma.loginEvent.create({ data: { userId: ownerId, ...meta, outcome: "SUCCESS" } });
-    await createSession(ownerId);
+    await createSession(ownerId, meta);
   } catch (e) {
     if (isNextControlFlowError(e)) throw e;
     logger.error("post-signup session creation failed", e, { route: "createInstitutionAction", userId: ownerId });

@@ -13,6 +13,22 @@ export type NavItem = { href: string; label: string; icon?: ReactNode; section?:
 
 const STORAGE = "mnx-sidebar-collapsed";
 
+function ShieldIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 12l2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function LogoutIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function AppSidebar({
   nav, activeHref, role, displayName, tenantName, logout, quickCreateHref,
 }: {
@@ -135,7 +151,7 @@ export function AppSidebar({
       </nav>
 
       {/* User footer */}
-      <div className={`border-t border-border ${collapsed ? "p-2" : "p-3"}`}>
+      <div className={`border-t border-border ${collapsed ? "p-2 space-y-1.5" : "p-3"}`}>
         <div className={`flex items-center gap-2 rounded-xl bg-elevated border border-border ${collapsed ? "p-1.5 justify-center" : "p-2"}`}>
           <div className="w-8 h-8 rounded-full bg-accent/15 text-accent flex items-center justify-center text-xs font-semibold shrink-0">{initials}</div>
           {!collapsed && (
@@ -145,13 +161,26 @@ export function AppSidebar({
             </div>
           )}
           {!collapsed && (
-            <form action={logout}>
-              <button className="btn-ghost w-8 h-8 p-0" title="Log out" aria-label="Log out">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              </button>
-            </form>
+            <div className="flex items-center gap-1 shrink-0">
+              <Link href="/account/security" className="btn-ghost w-8 h-8 p-0" title="Account & security" aria-label="Account & security">
+                <ShieldIcon />
+              </Link>
+              <form action={logout}>
+                <button className="btn-ghost w-8 h-8 p-0" title="Log out" aria-label="Log out"><LogoutIcon /></button>
+              </form>
+            </div>
           )}
         </div>
+        {collapsed && (
+          <div className="flex flex-col items-center gap-1">
+            <Link href="/account/security" className="btn-ghost w-9 h-9 p-0" title="Account & security" aria-label="Account & security">
+              <ShieldIcon />
+            </Link>
+            <form action={logout}>
+              <button className="btn-ghost w-9 h-9 p-0" title="Log out" aria-label="Log out"><LogoutIcon /></button>
+            </form>
+          </div>
+        )}
       </div>
     </aside>
   );

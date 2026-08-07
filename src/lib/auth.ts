@@ -65,12 +65,18 @@ export async function verifyPassword(pw: string, hash: string) {
   return bcrypt.compare(pw, hash);
 }
 
-export async function createSession(userId: string, opts?: { remember?: boolean }) {
+export async function createSession(
+  userId: string,
+  opts?: { remember?: boolean; ip?: string | null; userAgent?: string | null },
+) {
   const remember = opts?.remember ?? true;
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 14 * DAY);
   // Only the session row is on the critical path — the cookie needs its token.
-  await prisma.session.create({ data: { userId, token, expiresAt } });
+  // Device/network fingerprint powers the "Active sessions" security screen.
+  await prisma.session.create({
+    data: { userId, token, expiresAt, ip: opts?.ip ?? null, userAgent: opts?.userAgent ?? null },
+  });
   const store = await cookies();
   store.set(COOKIE, token, {
     httpOnly: true,
@@ -111,6 +117,13 @@ export async function getCurrentUser() {
     // Lazy cleanup: purge the dead row so stale tokens can't linger in the DB.
     await prisma.session.delete({ where: { token } }).catch(() => {});
     return null;
+  }
+  // "Last active" for the security screen. Throttled to ~15 min and deferred
+  // off the response path so it never adds a DB round-trip to page loads.
+  if (Date.now() - session.lastSeenAt.getTime() > 15 * 60 * 1000) {
+    afterResponse(() => {
+      prisma.session.update({ where: { token }, data: { lastSeenAt: new Date() } }).catch(() => {});
+    });
   }
   return session.user;
 }
