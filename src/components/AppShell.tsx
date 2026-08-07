@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { ReactNode } from "react";
-import { Logo } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
 import { CommandK, CommandItem } from "./CommandK";
 import { LiveBell } from "./LiveBell";
+import { AppSidebar } from "./shell/AppSidebar";
 import { logoutAction } from "@/app/login/actions";
 import { prisma } from "@/lib/prisma";
 
@@ -12,6 +12,14 @@ export type NavItemSpec = {
   label: string;
   icon?: ReactNode;
   section?: string;
+};
+
+// A sensible primary create/action per role for the sidebar "Quick create".
+const QUICK_CREATE: Record<string, string> = {
+  INSTITUTION_ADMIN: "/institution/leads",
+  PRINCIPAL: "/institution/leads",
+  TEACHER: "/teacher/attendance",
+  ACCOUNTANT: "/accounts/invoices",
 };
 
 export async function AppShell({
@@ -31,22 +39,17 @@ export async function AppShell({
   userId?: string;
   children: ReactNode;
 }) {
-  const groups = new Map<string, NavItemSpec[]>();
-  for (const item of nav) {
-    const s = item.section ?? "";
-    if (!groups.has(s)) groups.set(s, []);
-    groups.get(s)!.push(item);
-  }
+  const commandItems: CommandItem[] = nav.map((n) => ({ label: n.label, href: n.href, section: n.section }));
 
-  const commandItems: CommandItem[] = nav.map((n) => ({
-    label: n.label,
-    href: n.href,
-    section: n.section,
-  }));
+  const unread = userId ? await prisma.notification.count({ where: { userId, readAt: null } }) : 0;
 
-  const unread = userId
-    ? await prisma.notification.count({ where: { userId, readAt: null } })
-    : 0;
+  // Active = the LONGEST matching href (most specific), so a prefix like
+  // "/institution" (Cockpit) doesn't light up on every sub-page.
+  const activeHref =
+    nav
+      .filter((n) => currentPath && (currentPath === n.href || currentPath.startsWith(n.href + "/")))
+      .sort((a, b) => b.href.length - a.href.length)[0]?.href ?? "";
+  const active = nav.find((n) => n.href === activeHref);
 
   return (
     <div className="min-h-screen flex bg-bg relative">
@@ -58,64 +61,25 @@ export async function AppShell({
       </div>
       <a href="#main" className="sr-skip">Skip to content</a>
 
-      <aside className="w-64 shrink-0 border-r border-border bg-surface/70 backdrop-blur-xl flex flex-col relative z-10">
-        <div className="p-4 border-b border-border">
-          <Logo />
-          {tenantName && (
-            <div className="mt-3 text-xs text-muted uppercase tracking-wider">{tenantName}</div>
-          )}
-        </div>
-        <nav className="flex-1 p-3 overflow-y-auto space-y-4" aria-label="Primary">
-          {Array.from(groups.entries()).map(([section, items]) => (
-            <div key={section}>
-              {section && <div className="section-h px-3 mb-1.5">{section}</div>}
-              <div className="space-y-0.5">
-                {items.map((it) => {
-                  const active = currentPath
-                    ? currentPath === it.href || currentPath.startsWith(it.href + "/")
-                    : false;
-                  return (
-                    <Link
-                      key={it.href}
-                      href={it.href}
-                      className={`nav-link ${active ? "active" : ""}`}
-                      aria-current={active ? "page" : undefined}
-                    >
-                      {it.icon && (
-                        <span className="w-4 h-4 inline-flex items-center justify-center">{it.icon}</span>
-                      )}
-                      <span>{it.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </nav>
-        <div className="p-3 border-t border-border">
-          <div className="flex items-center gap-2 p-2 rounded-xl bg-elevated border border-border">
-            <div className="w-8 h-8 rounded-full bg-accent/15 text-accent flex items-center justify-center text-xs font-semibold shrink-0">
-              {displayName.split(" ").slice(0, 2).map((s) => s[0]).join("").toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm text-fg truncate">{displayName}</div>
-              <div className="text-xs text-muted">{role.replace(/_/g, " ")}</div>
-            </div>
-            <form action={logoutAction}>
-              <button className="btn-ghost w-8 h-8 p-0" title="Log out" aria-label="Log out">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
-                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-            </form>
-          </div>
-        </div>
-      </aside>
+      <AppSidebar
+        nav={nav}
+        activeHref={activeHref}
+        role={role}
+        displayName={displayName}
+        tenantName={tenantName}
+        logout={logoutAction}
+        quickCreateHref={QUICK_CREATE[role]}
+      />
 
       <main className="flex-1 flex flex-col min-w-0 relative z-10">
         <header className="h-14 border-b border-border bg-surface/60 backdrop-blur-xl px-6 flex items-center justify-between gap-3">
-          <div className="text-sm text-muted hidden lg:block">MANEXA · AI-Powered School Management</div>
-          <div className="flex items-center gap-2 ml-auto">
+          {/* Breadcrumb */}
+          <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-sm min-w-0">
+            <Link href="/" className="text-muted hover:text-fg shrink-0">MANEXA</Link>
+            {active?.section && <><span className="text-subtle">/</span><span className="text-muted hidden sm:inline">{active.section}</span></>}
+            {active && <><span className="text-subtle">/</span><span className="text-fg font-medium truncate">{active.label}</span></>}
+          </nav>
+          <div className="flex items-center gap-2 ml-auto shrink-0">
             <CommandK items={commandItems} />
             <LiveBell initialUnread={unread} />
             <ThemeToggle />
