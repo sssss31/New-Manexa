@@ -38,8 +38,13 @@ function KV({ label, children }: { label: string; children: React.ReactNode }) {
   );
 }
 
-export default async function AccountSecurityPage() {
+export default async function AccountSecurityPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ notice?: string; err?: string }>;
+}) {
   const user = await requireUser();
+  const sp = await searchParams;
   const token = await currentSessionToken();
   const [sessions, events] = await Promise.all([
     listSessions(user.id, token),
@@ -73,6 +78,17 @@ export default async function AccountSecurityPage() {
           <p className="text-sm text-muted mt-1">Your identity, devices and sign-in activity — all in one place.</p>
         </div>
 
+        {sp.notice && (
+          <div className="rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm text-success" role="status">
+            {decodeURIComponent(sp.notice)}
+          </div>
+        )}
+        {sp.err && (
+          <div className="rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-error" role="alert">
+            {decodeURIComponent(sp.err)}
+          </div>
+        )}
+
         {/* Identity */}
         <section className="glass-card p-6">
           <div className="flex items-center gap-2 mb-4">
@@ -99,7 +115,10 @@ export default async function AccountSecurityPage() {
                 {user.emailVerifiedAt ? (
                   <Tag tone="success">Verified</Tag>
                 ) : (
-                  <Tag tone="warning">Unverified</Tag>
+                  <>
+                    <Tag tone="warning">Unverified</Tag>
+                    <Link href="/verify-email" className="text-xs text-accent hover:underline">Verify now →</Link>
+                  </>
                 )}
               </span>
             </KV>

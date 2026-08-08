@@ -191,6 +191,28 @@ model RolePermission {
   @@index([tenantId, role])
 }
 
+// One-time verification codes for email/phone verification and OTP sign-in.
+// Standalone (no User FK): the target may be an email that has no account yet.
+// The plaintext code is NEVER stored — only an HMAC hash. Single-use, expiring,
+// attempt-capped. Old rows are disposable and swept lazily on issue.
+model OtpCode {
+  id         String    @id @default(cuid())
+  purpose    String // EMAIL_VERIFY | PHONE_VERIFY | LOGIN_2FA
+  channel    String // EMAIL | SMS
+  email      String?
+  phone      String?
+  userId     String?
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([purpose, email])
+  @@index([purpose, phone])
+  @@index([userId])
+}
+
 model Session {
   id         String   @id @default(cuid())
   userId     String

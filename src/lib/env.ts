@@ -45,6 +45,22 @@ const schema = z.object({
   NEXT_PUBLIC_RAZORPAY_KEY_ID: z.string().min(10).optional(),
   RAZORPAY_KEY_SECRET: z.string().min(10).optional(),
 
+  // Transactional email (OTP / verification). Resend HTTP API — set to send
+  // REAL email; otherwise codes are logged server-side (dev/simulated). Zero
+  // extra deps (plain fetch). EMAIL_FROM must be a verified sender/domain.
+  RESEND_API_KEY: z.string().min(10).optional(),
+  EMAIL_FROM: z.string().optional(),
+
+  // SMS OTP via MSG91 (India). All three enable REAL SMS; otherwise codes are
+  // logged server-side. Optional — the app runs fine on email-only.
+  MSG91_AUTH_KEY: z.string().min(10).optional(),
+  MSG91_SENDER_ID: z.string().optional(),
+  MSG91_OTP_TEMPLATE_ID: z.string().optional(),
+
+  // Pepper for hashing one-time codes (HMAC). Optional — falls back to
+  // SESSION_SECRET so OTP hashes are never stored with a predictable key.
+  OTP_SECRET: z.string().min(16).optional(),
+
   // Web Push (VAPID). Public key is exposed to the browser to subscribe; the
   // private key signs push messages server-side. BOTH must be set to enable
   // push; otherwise the app runs fine without phone notifications. Generate
