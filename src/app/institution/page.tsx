@@ -9,6 +9,8 @@ import { StatusBadge, Tag } from "@/components/ui";
 import { AreaChart, BarChart, DonutChart } from "@/components/Charts";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { Panel } from "@/components/dashboard/Panel";
+import { HealthScore } from "@/components/dashboard/HealthScore";
+import { computeInstitutionHealth } from "@/lib/health";
 import { BillingBanner } from "@/components/billing/BillingBanner";
 import { Reveal, RevealGroup, RevealItem } from "@/components/marketing/Reveal";
 import { inr, relative, dateShort } from "@/lib/format";
@@ -32,6 +34,7 @@ export default async function InstitutionCockpit() {
     recentAudit,
     upcomingExams,
     pendingJoins,
+    health,
   ] = await Promise.all([
     prisma.student.count({ where: { tenantId, status: "ACTIVE" } }),
     prisma.staff.count({ where: { tenantId, status: "ACTIVE" } }),
@@ -57,6 +60,7 @@ export default async function InstitutionCockpit() {
       include: { class: true, subject: true },
     }),
     prisma.user.count({ where: { tenantId, status: "PENDING" } }),
+    computeInstitutionHealth(tenantId),
   ]);
   const totalMarked = presentToday + absentToday;
   const attendancePct = totalMarked ? Math.round((presentToday / totalMarked) * 100) : 0;
@@ -155,6 +159,11 @@ export default async function InstitutionCockpit() {
         <RevealItem><KpiCard icon={<ClipboardList size={18} />} label="Upcoming exams" value={upcomingExams.length} sub="Scheduled" /></RevealItem>
         <RevealItem><KpiCard icon={<Megaphone size={18} />} label="Notices" value={recentNotices.length} sub="Recent" /></RevealItem>
       </RevealGroup>
+
+      {/* Institution Health Score — live composite + AI recommendations */}
+      <Reveal className="relative z-[1] mb-6">
+        <HealthScore health={health} />
+      </Reveal>
 
       {/* Analytics */}
       <Reveal className="relative z-[1] grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
