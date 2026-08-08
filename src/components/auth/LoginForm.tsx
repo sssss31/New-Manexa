@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { AuthField, PasswordField, AuthSubmit, MailIcon } from "./fields";
+import { GoogleButton } from "./GoogleButton";
 
 export function LoginForm({
-  action, errorMessage, notice, defaultEmail = "", demoMode = false,
+  action, errorMessage, notice, defaultEmail = "", demoMode = false, googleEnabled = false,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   errorMessage?: string | null;
   notice?: string | null;
   defaultEmail?: string;
   demoMode?: boolean;
+  googleEnabled?: boolean;
 }) {
   return (
     <motion.div
@@ -48,6 +50,17 @@ export function LoginForm({
 
         <AuthSubmit idleLabel="Sign in" />
       </form>
+
+      {googleEnabled && (
+        <>
+          <div className="my-5 flex items-center gap-3 text-xs text-subtle" aria-hidden>
+            <span className="h-px flex-1 bg-border" />
+            or
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          <GoogleButton />
+        </>
+      )}
 
       <p className="mt-6 text-center text-sm text-muted">
         New to MANEXA?{" "}

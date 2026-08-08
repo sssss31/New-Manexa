@@ -9,13 +9,21 @@ const isProd = process.env.NODE_ENV === "production";
 const RZP_SCRIPT = "https://checkout.razorpay.com";
 const RZP_FRAME = "https://api.razorpay.com https://checkout.razorpay.com";
 const RZP_CONNECT = "https://api.razorpay.com https://*.razorpay.com https://lumberjack.razorpay.com";
+// Supabase Auth (Google OAuth) — the browser client talks to the project origin
+// for token exchange/refresh. Added only when configured; harmless otherwise.
+let SUPA_CONNECT = "";
+try {
+  if (process.env.NEXT_PUBLIC_SUPABASE_URL) SUPA_CONNECT = " " + new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).origin;
+} catch {
+  /* malformed URL — leave the allowlist unchanged */
+}
 const CSP = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline' ${RZP_SCRIPT}${isProd ? "" : " 'unsafe-eval'"}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://*.razorpay.com",
   "font-src 'self' data:",
-  `connect-src 'self' ${RZP_CONNECT}${isProd ? "" : " ws:"}`,
+  `connect-src 'self' ${RZP_CONNECT}${SUPA_CONNECT}${isProd ? "" : " ws:"}`,
   `frame-src 'self' ${RZP_FRAME}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",

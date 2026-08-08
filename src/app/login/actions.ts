@@ -76,6 +76,18 @@ export async function loginAction(formData: FormData) {
 }
 
 export async function logoutAction() {
+  // Best-effort: if Google sign-in is configured, also end the Supabase OAuth
+  // session so a Google-authenticated user is fully signed out. Never block the
+  // app logout on the OAuth provider.
+  if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    try {
+      const { getSupabaseServer } = await import("@/lib/supabase/server");
+      const supabase = await getSupabaseServer();
+      await supabase?.auth.signOut();
+    } catch {
+      /* ignore — the app session below is what actually gates access */
+    }
+  }
   await destroySession();
   redirect("/login");
 }

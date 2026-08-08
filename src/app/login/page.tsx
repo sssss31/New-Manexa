@@ -6,6 +6,8 @@ import { LoginForm } from "@/components/auth/LoginForm";
 
 // Demo credentials list is shown ONLY when NEXT_PUBLIC_DEMO_MODE=true.
 const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+// "Continue with Google" appears only when Supabase Auth is configured.
+const GOOGLE_ENABLED = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 const demoAccounts = [
   { email: "super@manexa.test", role: "Super Admin" },
   { email: "admin@stjohns.manexa.test", role: "Institution Admin" },
@@ -21,6 +23,10 @@ const ERR: Record<string, string> = {
   pending: "Your account is awaiting admin approval.",
   dbdown: "Service temporarily unavailable — please try again shortly.",
   server: "Something went wrong signing in. Please try again.",
+  // Google OAuth (Supabase) outcomes handled by /auth/callback.
+  google_nouser: "No Manexa account matches this Google email — ask your institution admin to invite you.",
+  google_failed: "Google sign-in failed. Please try again.",
+  google_cancelled: "Google sign-in was cancelled.",
 };
 
 export default async function LoginPage({
@@ -53,6 +59,7 @@ export default async function LoginPage({
         notice={sp.notice ? decodeURIComponent(sp.notice) : null}
         defaultEmail={sp.email ?? ""}
         demoMode={DEMO_MODE}
+        googleEnabled={GOOGLE_ENABLED}
       />
     </AuthShell>
   );
