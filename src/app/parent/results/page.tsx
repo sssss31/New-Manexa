@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth";
 import { EmptyState, PageHeader, SectionCard, Stat, StatusBadge } from "@/components/ui";
@@ -18,6 +19,9 @@ export default async function ParentResults() {
   return (
     <>
       <PageHeader title="Published results" sub={kid.user.displayName} />
+      <div className="mb-6 flex justify-end">
+        <Link href={`/report-card/${kid.id}`} className="btn-primary text-sm">View report card →</Link>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <Stat label="Results out" value={marks.length} />
         <Stat label="Average score" value={`${avg}`} tone={avg >= 60 ? "success" : "warning"} sub="/ 100" />
