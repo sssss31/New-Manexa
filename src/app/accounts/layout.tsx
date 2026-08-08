@@ -22,6 +22,7 @@ export default async function AccountsLayout({ children }: { children: React.Rea
         { section: "Fee", href: "/accounts/collections", label: "Collections", icon: <IconMoney /> },
         { section: "Fee", href: "/accounts/defaulters", label: "Defaulters", icon: <IconMega /> },
         { section: "People", href: "/accounts/payroll", label: "Payroll", icon: <IconMoney /> },
+        { section: "Accounting", href: "/accounts/expenses", label: "Expenses & P&L", icon: <IconMoney /> },
         { section: "Analytics", href: "/accounts/reports", label: "Reports", icon: <IconChart /> },
         { section: "System", href: "/accounts/audit", label: "Audit log", icon: <IconLog /> },
       ]}

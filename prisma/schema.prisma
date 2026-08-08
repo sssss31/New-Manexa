@@ -213,6 +213,26 @@ model OtpCode {
   @@index([userId])
 }
 
+// Institution operating expenses — the debit side of the P&L (income comes from
+// Payment). App-layer tenancy via a scalar tenantId (same pattern as LoginEvent)
+// so no Tenant relation edit is needed. Amounts are INR integers like the rest
+// of the app. Categories are a known string set (see lib/finance.ts).
+model Expense {
+  id          String   @id @default(cuid())
+  tenantId    String
+  category    String
+  description String
+  amount      Int
+  paidVia     String   @default("CASH")
+  vendor      String?
+  spentAt     DateTime @default(now())
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, spentAt])
+  @@index([tenantId, category])
+}
+
 model Session {
   id         String   @id @default(cuid())
   userId     String
