@@ -10,8 +10,12 @@
 // attention" / AI-recommendations surface, grounded in the tenant's own numbers.
 import { prisma } from "./prisma";
 import { inr } from "./format";
+import { cached } from "./cache";
 
 const DAY = 86_400_000;
+// The health score is a slow-moving aggregate over many rows — safe to cache
+// briefly. 60s trades a little staleness for a big drop in dashboard DB load.
+const HEALTH_TTL_SEC = 60;
 
 export type HealthBand = "excellent" | "good" | "fair" | "attention";
 export type HealthDimension = {
@@ -39,7 +43,17 @@ export function bandOf(overall: number): HealthBand {
   return "attention";
 }
 
+/**
+ * Institution health for the dashboard. Cached per-tenant for 60s (Redis when
+ * configured, else per-process) so repeat loads don't re-run the whole query
+ * fan-out. Use `computeInstitutionHealthFresh` when you need a guaranteed-live
+ * value (tests, force-refresh).
+ */
 export async function computeInstitutionHealth(tenantId: string): Promise<InstitutionHealth> {
+  return cached(`health:${tenantId}`, HEALTH_TTL_SEC, () => computeInstitutionHealthFresh(tenantId));
+}
+
+export async function computeInstitutionHealthFresh(tenantId: string): Promise<InstitutionHealth> {
   const now = new Date();
   const since = new Date(now.getTime() - 30 * DAY);
 
