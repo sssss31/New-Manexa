@@ -61,7 +61,20 @@ export function FaceCapture({
         setCamReady(true);
         loop();
       } catch (e: any) {
-        setCamError(e?.name === "NotAllowedError" ? "Camera permission denied" : "Could not start camera");
+        const name = e?.name;
+        setCamError(
+          name === "NotAllowedError" || name === "SecurityError"
+            ? "Camera permission blocked — allow it in the browser (address-bar icon) and reload."
+            : name === "NotReadableError" || name === "TrackStartError"
+            ? "Camera is busy — close Zoom/Meet/other tabs using it, then reload."
+            : name === "NotFoundError" || name === "DevicesNotFoundError"
+            ? "No camera found on this device."
+            : name === "InsecureContextError"
+            ? "Camera needs a secure page — open over https:// or http://localhost (not an IP)."
+            : name === "OverconstrainedError"
+            ? "This camera couldn't match the requested settings — reload to retry."
+            : "Could not start camera — check it isn't blocked or in use, then reload."
+        );
       }
     })();
     return () => {

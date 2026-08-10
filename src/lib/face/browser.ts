@@ -26,16 +26,35 @@ async function detectFaces(canvas: HTMLCanvasElement): Promise<DetectedBox[]> {
 }
 
 export async function startCamera(video: HTMLVideoElement): Promise<MediaStream> {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    // 640×480 @ ~24fps: ~4× fewer pixels than 720p to draw/analyse per frame,
-    // which noticeably cuts CPU + latency. A face still spans 150–400px here,
-    // more than enough for the embedder and quality gates.
-    video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: "user" },
-    audio: false,
-  });
-  video.srcObject = stream;
-  await video.play();
-  return stream;
+  // getUserMedia only exists in a secure context (HTTPS or http://localhost).
+  // Over a plain-HTTP IP/tunnel it's undefined — surface a clear reason.
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+    const err = new Error("Camera needs a secure page — open it over https:// or http://localhost.");
+    err.name = "InsecureContextError";
+    throw err;
+  }
+  // Try preferred (light) constraints first, then progressively looser ones so
+  // an over-constrained or quirky camera still starts. 640×480 keeps the frame
+  // ~4× smaller than 720p → less CPU + latency; a face still spans 150–400px.
+  const attempts: MediaStreamConstraints[] = [
+    { video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 }, facingMode: "user" }, audio: false },
+    { video: { facingMode: "user" }, audio: false },
+    { video: true, audio: false },
+  ];
+  let lastErr: unknown;
+  for (const constraints of attempts) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = stream;
+      await video.play().catch(() => {});
+      return stream;
+    } catch (e) {
+      lastErr = e;
+      // A permission denial won't be fixed by looser constraints — stop now.
+      if ((e as Error)?.name === "NotAllowedError") break;
+    }
+  }
+  throw lastErr ?? new Error("Could not start camera");
 }
 
 export function stopCamera(stream: MediaStream | null) {
