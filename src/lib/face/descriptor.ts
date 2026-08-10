@@ -12,6 +12,11 @@ export const DESCRIPTOR_DIM = 256; // 16×16 grayscale; ArcFace path uses 512
 export const POSES = ["FRONT", "LEFT30", "RIGHT30", "UP", "DOWN", "SMILE", "NEUTRAL"] as const;
 export type Pose = (typeof POSES)[number];
 
+// Poses actually required at enrolment. Kept to a fast two — a straight-on and a
+// neutral frame — which is enough for reliable front-facing attendance while
+// making enrolment quick. The engine still accepts any of the full POSES.
+export const ENROLL_POSES: Pose[] = ["FRONT", "NEUTRAL"];
+
 export const POSE_GUIDE: Record<Pose, string> = {
   FRONT: "Look straight at the camera",
   LEFT30: "Turn your head ~30° left",

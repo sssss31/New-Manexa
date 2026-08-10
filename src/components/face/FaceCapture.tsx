@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { analyzeFrame, startCamera, stopCamera } from "@/lib/face/browser";
-import { gradeQuality, POSE_GUIDE, POSES, type Pose } from "@/lib/face/descriptor";
+import { gradeQuality, POSE_GUIDE, ENROLL_POSES, type Pose } from "@/lib/face/descriptor";
 
 type PoseState = "pending" | "captured";
 
@@ -26,7 +26,7 @@ export function FaceCapture({
     score: 0, brightness: 0, sharpness: 0, faceBoxPx: 0, reasons: ["Starting camera…"],
   });
   const [poseState, setPoseState] = useState<Record<Pose, PoseState>>(
-    Object.fromEntries(POSES.map((p) => [p, "pending"])) as Record<Pose, PoseState>
+    Object.fromEntries(ENROLL_POSES.map((p) => [p, "pending"])) as Record<Pose, PoseState>
   );
   const [activePose, setActivePose] = useState<Pose>("FRONT");
   const [busy, setBusy] = useState(false);
@@ -95,7 +95,7 @@ export function FaceCapture({
       } else {
         setPoseState((s) => ({ ...s, [activePose]: "captured" }));
         setToast({ kind: "ok", msg: `${activePose} captured · quality ${data.quality}%` });
-        const next = POSES.find((p) => p !== activePose && poseState[p] === "pending");
+        const next = ENROLL_POSES.find((p) => p !== activePose && poseState[p] === "pending");
         if (next) setActivePose(next);
       }
     } catch {
@@ -176,13 +176,13 @@ export function FaceCapture({
       <div className="card p-5">
         <div className="flex items-baseline justify-between mb-1">
           <h3 className="font-display text-lg text-fg">Enrol {subjectName}</h3>
-          <span className="text-xs text-muted font-mono">{captured}/{POSES.length}</span>
+          <span className="text-xs text-muted font-mono">{captured}/{ENROLL_POSES.length}</span>
         </div>
         <p className="text-sm text-muted mb-4">
-          Capture all seven poses. Each is quality-checked before it&apos;s accepted; embeddings are encrypted server-side and never leave the server.
+          Capture two quick frames — front &amp; neutral. Each is quality-checked before it&apos;s accepted; embeddings are encrypted server-side and never leave the server.
         </p>
         <div className="space-y-2">
-          {POSES.map((p) => {
+          {ENROLL_POSES.map((p) => {
             const done = poseState[p] === "captured";
             const active = p === activePose;
             return (
@@ -211,9 +211,9 @@ export function FaceCapture({
             );
           })}
         </div>
-        {captured === POSES.length && (
+        {captured === ENROLL_POSES.length && (
           <div className="mt-4 badge badge-success w-full py-2 justify-center animate-pop">
-            All poses enrolled — {subjectName} is ready for face attendance.
+            Enrolled — {subjectName} is ready for face attendance.
           </div>
         )}
       </div>

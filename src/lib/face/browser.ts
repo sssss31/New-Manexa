@@ -27,7 +27,10 @@ async function detectFaces(canvas: HTMLCanvasElement): Promise<DetectedBox[]> {
 
 export async function startCamera(video: HTMLVideoElement): Promise<MediaStream> {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+    // 640×480 @ ~24fps: ~4× fewer pixels than 720p to draw/analyse per frame,
+    // which noticeably cuts CPU + latency. A face still spans 150–400px here,
+    // more than enough for the embedder and quality gates.
+    video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: "user" },
     audio: false,
   });
   video.srcObject = stream;
@@ -45,14 +48,23 @@ export interface Analysis {
   box: DetectedBox | null;
 }
 
+// One reusable offscreen canvas for the whole session — allocating a fresh
+// canvas + 2D context on every frame (~4–5×/sec) churns GC and adds latency.
+let _frameCanvas: HTMLCanvasElement | null = null;
+let _frameCtx: CanvasRenderingContext2D | null = null;
+
 // Analyse the current video frame: metrics + descriptor from the aligned crop.
 export async function analyzeFrame(video: HTMLVideoElement): Promise<Analysis> {
   const w = video.videoWidth || 640;
   const h = video.videoHeight || 480;
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  if (!_frameCanvas) {
+    _frameCanvas = document.createElement("canvas");
+    _frameCtx = _frameCanvas.getContext("2d", { willReadFrequently: true });
+  }
+  const canvas = _frameCanvas;
+  if (canvas.width !== w) canvas.width = w;
+  if (canvas.height !== h) canvas.height = h;
+  const ctx = _frameCtx!;
   ctx.drawImage(video, 0, 0, w, h);
 
   const boxes = await detectFaces(canvas);
