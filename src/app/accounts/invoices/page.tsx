@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth";
 import { PageHeader, SectionCard, StatusBadge } from "@/components/ui";
 import { inr, dateShort } from "@/lib/format";
-import { payInvoiceAction } from "../actions";
+import { generateMonthlyInvoicesAction, payInvoiceAction } from "../actions";
 
 export default async function InvoicesPage() {
   const user = await requireRole("ACCOUNTANT");
@@ -14,7 +14,15 @@ export default async function InvoicesPage() {
   });
   return (
     <>
-      <PageHeader title="Invoices" sub="All raised invoices · pay offline (cash/cheque/UPI) directly from here" />
+      <PageHeader
+        title="Invoices"
+        sub="All raised invoices · PDF, print & offline payment (cash/cheque/UPI) from here"
+        actions={
+          <form action={generateMonthlyInvoicesAction}>
+            <button className="btn-secondary text-sm">Generate monthly invoices</button>
+          </form>
+        }
+      />
       <SectionCard>
         <table className="w-full">
           <thead>
@@ -40,15 +48,23 @@ export default async function InvoicesPage() {
                 <td className="td tabular-nums">{inr(i.total)}</td>
                 <td className="td"><StatusBadge status={i.status} /></td>
                 <td className="td">
-                  {i.status !== "PAID" && (
-                    <form action={payInvoiceAction} className="flex gap-1">
-                      <input type="hidden" name="invoiceId" value={i.id} />
-                      <select name="method" className="select text-xs px-2 py-1">
-                        <option>UPI</option><option>CASH</option><option>CARD</option><option>NETBANKING</option><option>CHEQUE</option>
-                      </select>
-                      <button className="btn-primary text-xs px-2 py-1">Mark paid</button>
-                    </form>
-                  )}
+                  <div className="flex items-center gap-1">
+                    <a href={`/api/invoices/${i.id}/pdf`} target="_blank" className="btn-ghost text-xs px-2 py-1">
+                      PDF
+                    </a>
+                    <a href={`/print/invoice/${i.id}`} target="_blank" className="btn-ghost text-xs px-2 py-1">
+                      Print
+                    </a>
+                    {i.status !== "PAID" && (
+                      <form action={payInvoiceAction} className="flex gap-1">
+                        <input type="hidden" name="invoiceId" value={i.id} />
+                        <select name="method" className="select text-xs px-2 py-1">
+                          <option>UPI</option><option>CASH</option><option>CARD</option><option>NETBANKING</option><option>CHEQUE</option>
+                        </select>
+                        <button className="btn-primary text-xs px-2 py-1">Mark paid</button>
+                      </form>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

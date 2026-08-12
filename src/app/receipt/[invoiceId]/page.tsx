@@ -30,7 +30,12 @@ export default async function ReceiptPage({ params }: { params: Promise<{ invoic
       <div className="mx-auto max-w-2xl">
         <div className="mb-4 flex items-center justify-between print:hidden">
           <a href="/parent/fees" className="btn-ghost text-sm">← Back</a>
-          <PrintButton />
+          <div className="flex items-center gap-2">
+            <PrintButton />
+            <a href={`/api/invoices/${invoice.id}/pdf`} target="_blank" className="btn-primary text-sm">
+              Download PDF
+            </a>
+          </div>
         </div>
 
         <div className="card rounded-2xl p-8 print:border-0 print:shadow-none">
