@@ -1,0 +1,1203 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Tenant {
+  id                 String                  @id @default(cuid())
+  name               String
+  subdomain          String                  @unique
+  code               String                  @unique
+  logoUrl            String?
+  address            String?
+  board              String?
+  planId             String?
+  isolation          String                  @default("POOLED")
+  status             String                  @default("ACTIVE")
+  currency           String                  @default("INR")
+  primaryColor       String                  @default("#B6FF2A")
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  academicYear       String?
+  city               String?
+  country            String?                 @default("India")
+  email              String?
+  institutionId      String                  @unique
+  ownerId            String?
+  phone              String?
+  postalCode         String?
+  state              String?
+  subscriptionExpiry DateTime?
+  type               String                  @default("SCHOOL")
+  website            String?
+  faceDevices        AttendanceDevice[]
+  auditLogs          AuditLog[]
+  automations        Automation[]
+  banners            Banner[]
+  classes            Class[]
+  courses            Course[]
+  events             Event[]
+  exams              Exam[]
+  faceSessions       FaceAttendanceSession[]
+  faceProfiles       FaceProfile[]
+  feeStructures      FeeStructure[]
+  hostelRooms        HostelRoom[]
+  inventoryItems     InventoryItem[]
+  invoices           Invoice[]
+  leads              Lead[]
+  libraryItems       LibraryItem[]
+  messages           Message[]
+  notices            Notice[]
+  notifications      Notification[]
+  parents            Parent[]
+  recognitionLogs    RecognitionLog[]
+  rolePermissions    RolePermission[]
+  routes             Route[]
+  sections           Section[]
+  staff              Staff[]
+  staffAttendance    StaffAttendance[]
+  students           Student[]
+  subjects           Subject[]
+  subscriptions      Subscription[]
+  plan               SubscriptionPlan?       @relation(fields: [planId], references: [id])
+  unknownFaces       UnknownFace[]
+  users              User[]
+  vehicles           Vehicle[]
+  ledgerAccounts     LedgerAccount[]
+  journalEntries     JournalEntry[]
+
+  @@index([type, status])
+}
+
+model User {
+  id              String       @id @default(cuid())
+  email           String       @unique
+  // Public, human-readable, IMMUTABLE institution ID: [CODE]-[TYPE]-[SEQ]
+  // (e.g. DPS-S-001). Separate from the CUID primary key. Assigned once by the
+  // centralized manexa-id service; never changes and never reused after delete.
+  manexaId        String?      @unique
+  phone           String?
+  passwordHash    String
+  displayName     String
+  role            String
+  status          String       @default("ACTIVE")
+  mfaEnabled      Boolean      @default(false)
+  lastLoginAt     DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  tenantId        String?
+  emailVerifiedAt DateTime?
+  mfaSecret       String?
+  provider        String       @default("LOCAL")
+  auditLogs       AuditLog[]   @relation("actor")
+  loginEvents     LoginEvent[]
+  parent          Parent?
+  sessions        Session[]
+  resetTokens     PasswordResetToken[]
+  pushSubs        PushSubscription[]
+  staff           Staff?
+  student         Student?
+  tenant          Tenant?      @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, role])
+}
+
+// Password-reset tokens (single-use, short-lived). Email delivery is simulated
+// locally (the reset link is logged) as with the other external services.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Web Push (VAPID) subscriptions — one row per browser/device that opted in.
+// Lets the server buzz a user's phone even when the app/tab is closed.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  ua        String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model LoginEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  tenantId  String?
+  ip        String?
+  userAgent String?
+  outcome   String   @default("SUCCESS")
+  at        DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, at])
+  @@index([tenantId, at])
+}
+
+model InstitutionCounter {
+  type String @id
+  next Int    @default(1)
+}
+
+// Per-tenant atomic sequence generator (admission no, invoice no, employee
+// code, per-section roll no). Replaces count()+1, which raced to P2002 under
+// concurrency and replayed numbers after a delete.
+model SequenceCounter {
+  tenantId String
+  name     String // "admission" | "invoice" | "employee" | "roll:<sectionId>"
+  next     Int    @default(1)
+
+  @@id([tenantId, name])
+}
+
+// Durable, cross-instance rate-limit ledger. Used as the fallback for
+// low-frequency sensitive buckets (login/signup) when Upstash isn't configured
+// — the in-memory limiter is per-instance and useless on serverless.
+model RateLimitHit {
+  id  String   @id @default(cuid())
+  key String
+  at  DateTime @default(now())
+
+  @@index([key, at])
+}
+
+model Permission {
+  key      String @id
+  label    String
+  category String
+}
+
+model RolePermission {
+  id            String  @id @default(cuid())
+  tenantId      String
+  role          String
+  permissionKey String
+  allowed       Boolean @default(true)
+  tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, role, permissionKey])
+  @@index([tenantId, role])
+}
+
+// One-time verification codes for email/phone verification and OTP sign-in.
+// Standalone (no User FK): the target may be an email that has no account yet.
+// The plaintext code is NEVER stored — only an HMAC hash. Single-use, expiring,
+// attempt-capped. Old rows are disposable and swept lazily on issue.
+model OtpCode {
+  id         String    @id @default(cuid())
+  purpose    String // EMAIL_VERIFY | PHONE_VERIFY | LOGIN_2FA
+  channel    String // EMAIL | SMS
+  email      String?
+  phone      String?
+  userId     String?
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([purpose, email])
+  @@index([purpose, phone])
+  @@index([userId])
+}
+
+// Institution operating expenses — the debit side of the P&L (income comes from
+// Payment). App-layer tenancy via a scalar tenantId (same pattern as LoginEvent)
+// so no Tenant relation edit is needed. Amounts are INR integers like the rest
+// of the app. Categories are a known string set (see lib/finance.ts).
+model Expense {
+  id          String   @id @default(cuid())
+  tenantId    String
+  category    String
+  description String
+  amount      Int
+  paidVia     String   @default("CASH")
+  vendor      String?
+  spentAt     DateTime @default(now())
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, spentAt])
+  @@index([tenantId, category])
+}
+
+// ── Operations modules (Phase 6b) ────────────────────────────────────────────
+// All use app-layer tenancy via a scalar tenantId (like Expense/LoginEvent).
+
+model Vendor {
+  id        String          @id @default(cuid())
+  tenantId  String
+  name      String
+  category  String          @default("GENERAL")
+  contact   String?
+  email     String?
+  phone     String?
+  gstin     String?
+  createdAt DateTime        @default(now())
+  orders    PurchaseOrder[]
+
+  @@index([tenantId])
+}
+
+model PurchaseOrder {
+  id          String    @id @default(cuid())
+  tenantId    String
+  vendorId    String
+  number      String
+  description String
+  amount      Int
+  status      String    @default("DRAFT") // DRAFT | APPROVED | RECEIVED | CANCELLED
+  orderedAt   DateTime  @default(now())
+  approvedAt  DateTime?
+  receivedAt  DateTime?
+  createdById String?
+  vendor      Vendor    @relation(fields: [vendorId], references: [id])
+
+  @@index([tenantId, status])
+}
+
+model Visitor {
+  id          String    @id @default(cuid())
+  tenantId    String
+  name        String
+  phone       String?
+  purpose     String
+  host        String?
+  passNo      String?
+  checkInAt   DateTime  @default(now())
+  checkOutAt  DateTime?
+  status      String    @default("IN") // IN | OUT
+  createdById String?
+
+  @@index([tenantId, status])
+  @@index([tenantId, checkInAt])
+}
+
+model Document {
+  id           String   @id @default(cuid())
+  tenantId     String
+  title        String
+  category     String   @default("GENERAL") // POLICY | CONTRACT | CERTIFICATE | HR | STUDENT | FINANCE | GENERAL
+  ownerType    String   @default("INSTITUTION") // INSTITUTION | STUDENT | STAFF
+  reference    String? // external URL or physical location
+  note         String?
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId, category])
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  tenantId    String
+  title       String
+  description String?
+  assigneeId  String? // userId
+  priority    String    @default("MEDIUM") // LOW | MEDIUM | HIGH
+  status      String    @default("TODO") // TODO | IN_PROGRESS | DONE
+  dueDate     DateTime?
+  createdById String?
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId, status])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  token      String   @unique
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  // Device/network fingerprint for the "Active sessions" security screen.
+  // All optional so old rows keep working; captured at sign-in.
+  ip         String?
+  userAgent  String?
+  lastSeenAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Lead {
+  id             String         @id @default(cuid())
+  tenantId       String
+  parentName     String
+  studentName    String
+  gradeInterest  String
+  phone          String
+  email          String?
+  source         String
+  stage          String         @default("NEW")
+  score          Int            @default(0)
+  assignedToId   String?
+  notes          String?
+  lostReason     String?
+  firstContactAt DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  tenant         Tenant         @relation(fields: [tenantId], references: [id])
+  activities     LeadActivity[]
+
+  @@index([tenantId, stage])
+}
+
+model LeadActivity {
+  id        String   @id @default(cuid())
+  leadId    String
+  type      String
+  detail    String
+  actorId   String?
+  createdAt DateTime @default(now())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+model Class {
+  id           String                  @id @default(cuid())
+  tenantId     String
+  name         String
+  stream       String?
+  createdAt    DateTime                @default(now())
+  tenant       Tenant                  @relation(fields: [tenantId], references: [id])
+  subjects     ClassSubject[]
+  exams        Exam[]
+  faceSessions FaceAttendanceSession[]
+  fees         FeeStructure[]
+  sections     Section[]
+  students     Student[]
+  timetables   TimetableEntry[]
+
+  @@unique([tenantId, name])
+}
+
+model Section {
+  id             String                  @id @default(cuid())
+  tenantId       String
+  classId        String
+  name           String
+  capacity       Int                     @default(40)
+  classTeacherId String?
+  createdAt      DateTime                @default(now())
+  faceSessions   FaceAttendanceSession[]
+  class          Class                   @relation(fields: [classId], references: [id])
+  tenant         Tenant                  @relation(fields: [tenantId], references: [id])
+  students       Student[]
+  timetables     TimetableEntry[]
+
+  @@unique([classId, name])
+}
+
+model Subject {
+  id           String                  @id @default(cuid())
+  tenantId     String
+  code         String
+  name         String
+  createdAt    DateTime                @default(now())
+  classes      ClassSubject[]
+  courses      Course[]
+  exams        Exam[]
+  faceSessions FaceAttendanceSession[]
+  tenant       Tenant                  @relation(fields: [tenantId], references: [id])
+  timetables   TimetableEntry[]
+
+  @@unique([tenantId, code])
+}
+
+model ClassSubject {
+  id        String  @id @default(cuid())
+  classId   String
+  subjectId String
+  teacherId String?
+  credits   Int     @default(4)
+  class     Class   @relation(fields: [classId], references: [id])
+  subject   Subject @relation(fields: [subjectId], references: [id])
+
+  @@unique([classId, subjectId])
+}
+
+model Student {
+  id                  String                 @id @default(cuid())
+  tenantId            String
+  userId              String                 @unique
+  admissionNo         String
+  rollNo              String?
+  classId             String
+  sectionId           String
+  dateOfBirth         DateTime?
+  gender              String?
+  bloodGroup          String?
+  category            String?
+  address             String?
+  medicalNotes        String?
+  status              String                 @default("ACTIVE")
+  admittedAt          DateTime               @default(now())
+  deletedAt           DateTime?
+  submissions         AssignmentSubmission[]
+  attendance          Attendance[]
+  disciplineIncidents DisciplineIncident[]
+  faceAttendance      FaceAttendanceRecord[]
+  faceProfile         FaceProfile?
+  hostelAllocation    HostelAllocation?
+  invoices            Invoice[]
+  libraryLoans        LibraryLoan[]
+  marks               Mark[]
+  parents             ParentStudent[]
+  class               Class                  @relation(fields: [classId], references: [id])
+  section             Section                @relation(fields: [sectionId], references: [id])
+  tenant              Tenant                 @relation(fields: [tenantId], references: [id])
+  user                User                   @relation(fields: [userId], references: [id])
+  transportAlloc      TransportAllocation?
+
+  @@unique([tenantId, admissionNo])
+  @@index([tenantId, classId])
+  @@index([tenantId, status])
+}
+
+model Parent {
+  id         String          @id @default(cuid())
+  tenantId   String
+  userId     String          @unique
+  relation   String
+  occupation String?
+  tenant     Tenant          @relation(fields: [tenantId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+  children   ParentStudent[]
+}
+
+model ParentStudent {
+  id        String  @id @default(cuid())
+  parentId  String
+  studentId String
+  isPrimary Boolean @default(false)
+  parent    Parent  @relation(fields: [parentId], references: [id])
+  student   Student @relation(fields: [studentId], references: [id])
+
+  @@unique([parentId, studentId])
+}
+
+model Staff {
+  id           String           @id @default(cuid())
+  tenantId     String
+  userId       String           @unique
+  employeeCode String
+  designation  String
+  department   String?
+  joiningDate  DateTime         @default(now())
+  ctcMonthly   Int              @default(0)
+  status       String           @default("ACTIVE")
+  leaveBalance Int              @default(12)
+  faceProfile  FaceProfile?
+  payrollRuns  PayrollLine[]
+  attendance   StaffAttendance[]
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+  user         User             @relation(fields: [userId], references: [id])
+  timetables   TimetableEntry[]
+  leaves       StaffLeave[]
+
+  @@unique([tenantId, employeeCode])
+}
+
+// Daily staff/employee attendance rollup — first-in / last-out / worked-hours.
+// Punches (usually via face recognition at an office camera) update the same
+// day row. Separate from the student `Attendance` table by design.
+model StaffAttendance {
+  id            String    @id @default(cuid())
+  tenantId      String
+  staffId       String
+  date          DateTime // IST-anchored day key (see normalizeDate)
+  status        String    @default("PRESENT") // PRESENT | LATE | HALF_DAY | ABSENT | LEAVE
+  firstInAt     DateTime?
+  lastOutAt     DateTime?
+  workedMinutes Int       @default(0)
+  method        String    @default("FACE") // FACE | MANUAL | QR
+  createdAt     DateTime  @default(now())
+  staff         Staff     @relation(fields: [staffId], references: [id])
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@unique([staffId, date])
+  @@index([tenantId, date])
+}
+
+model TimetableEntry {
+  id        String  @id @default(cuid())
+  tenantId  String
+  classId   String
+  sectionId String
+  subjectId String
+  teacherId String?
+  dayOfWeek Int
+  period    Int
+  room      String?
+  class     Class   @relation(fields: [classId], references: [id])
+  section   Section @relation(fields: [sectionId], references: [id])
+  subject   Subject @relation(fields: [subjectId], references: [id])
+  teacher   Staff?  @relation(fields: [teacherId], references: [id])
+}
+
+model Attendance {
+  id        String   @id @default(cuid())
+  tenantId  String
+  studentId String
+  date      DateTime
+  status    String
+  markedBy  String?
+  reason    String?
+  createdAt DateTime @default(now())
+  student   Student  @relation(fields: [studentId], references: [id])
+
+  @@unique([studentId, date])
+  @@index([tenantId, date])
+}
+
+model Course {
+  id          String       @id @default(cuid())
+  tenantId    String
+  subjectId   String
+  title       String
+  summary     String?
+  teacherId   String?
+  publishedAt DateTime?
+  createdAt   DateTime     @default(now())
+  assignments Assignment[]
+  subject     Subject      @relation(fields: [subjectId], references: [id])
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  lessons     Lesson[]
+}
+
+model Lesson {
+  id            String  @id @default(cuid())
+  courseId      String
+  order         Int
+  title         String
+  body          String
+  videoUrl      String?
+  attachmentUrl String?
+  minutes       Int     @default(30)
+  course        Course  @relation(fields: [courseId], references: [id])
+}
+
+model Assignment {
+  id           String                 @id @default(cuid())
+  courseId     String
+  title        String
+  instructions String
+  dueAt        DateTime
+  maxScore     Int                    @default(100)
+  createdAt    DateTime               @default(now())
+  course       Course                 @relation(fields: [courseId], references: [id])
+  submissions  AssignmentSubmission[]
+}
+
+model AssignmentSubmission {
+  id           String     @id @default(cuid())
+  assignmentId String
+  studentId    String
+  submittedAt  DateTime   @default(now())
+  content      String
+  score        Int?
+  feedback     String?
+  assignment   Assignment @relation(fields: [assignmentId], references: [id])
+  student      Student    @relation(fields: [studentId], references: [id])
+
+  @@unique([assignmentId, studentId])
+}
+
+model Exam {
+  id          String   @id @default(cuid())
+  tenantId    String
+  classId     String
+  subjectId   String
+  type        String
+  title       String
+  scheduledAt DateTime
+  maxScore    Int      @default(100)
+  status      String   @default("SCHEDULED")
+  createdAt   DateTime @default(now())
+  class       Class    @relation(fields: [classId], references: [id])
+  subject     Subject  @relation(fields: [subjectId], references: [id])
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  marks       Mark[]
+}
+
+model Mark {
+  id        String   @id @default(cuid())
+  examId    String
+  studentId String
+  score     Int
+  remark    String?
+  createdAt DateTime @default(now())
+  exam      Exam     @relation(fields: [examId], references: [id])
+  student   Student  @relation(fields: [studentId], references: [id])
+
+  @@unique([examId, studentId])
+}
+
+model FeeStructure {
+  id        String   @id @default(cuid())
+  tenantId  String
+  classId   String
+  name      String
+  tuition   Int      @default(0)
+  transport Int      @default(0)
+  hostel    Int      @default(0)
+  lab       Int      @default(0)
+  activity  Int      @default(0)
+  exam      Int      @default(0)
+  misc      Int      @default(0)
+  frequency String   @default("MONTHLY")
+  createdAt DateTime @default(now())
+  class     Class    @relation(fields: [classId], references: [id])
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model Invoice {
+  id          String        @id @default(cuid())
+  tenantId    String
+  studentId   String
+  number      String
+  periodLabel String
+  issueDate   DateTime      @default(now())
+  dueDate     DateTime
+  subtotal    Int
+  discount    Int           @default(0)
+  lateFee     Int           @default(0)
+  total       Int
+  status      String        @default("DUE")
+  paidAt      DateTime?
+  student     Student       @relation(fields: [studentId], references: [id])
+  tenant      Tenant        @relation(fields: [tenantId], references: [id])
+  items       InvoiceItem[]
+  payments    Payment[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId, status])
+  @@index([tenantId, dueDate])
+}
+
+model InvoiceItem {
+  id        String  @id @default(cuid())
+  invoiceId String
+  head      String
+  amount    Int
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  amount      Int
+  method      String
+  reference   String
+  gatewayTxId String?
+  paidAt      DateTime @default(now())
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+}
+
+model PayrollRun {
+  id         String        @id @default(cuid())
+  tenantId   String
+  period     String
+  runAt      DateTime      @default(now())
+  status     String        @default("DRAFT")
+  totalGross Int           @default(0)
+  totalNet   Int           @default(0)
+  lines      PayrollLine[]
+
+  @@unique([tenantId, period])
+}
+
+model PayrollLine {
+  id           String     @id @default(cuid())
+  payrollRunId String
+  staffId      String
+  gross        Int
+  pf           Int        @default(0)
+  esi          Int        @default(0)
+  tds          Int        @default(0)
+  net          Int
+  run          PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  staff        Staff      @relation(fields: [staffId], references: [id])
+}
+
+model Notice {
+  id            String   @id @default(cuid())
+  tenantId      String
+  title         String
+  body          String
+  audience      String
+  audienceScope String?
+  authorId      String?
+  publishedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  tenantId  String
+  channel   String
+  toName    String
+  toAddress String
+  template  String
+  body      String
+  status    String   @default("SENT")
+  sentAt    DateTime @default(now())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model Vehicle {
+  id              String    @id @default(cuid())
+  tenantId        String
+  registration    String
+  capacity        Int
+  driverName      String
+  driverPhone     String
+  insuranceExpiry DateTime?
+  fitnessExpiry   DateTime?
+  status          String    @default("ACTIVE")
+  routes          Route[]
+  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+}
+
+model Route {
+  id          String                @id @default(cuid())
+  tenantId    String
+  name        String
+  vehicleId   String
+  stops       String
+  monthlyFare Int                   @default(0)
+  tenant      Tenant                @relation(fields: [tenantId], references: [id])
+  vehicle     Vehicle               @relation(fields: [vehicleId], references: [id])
+  allocations TransportAllocation[]
+}
+
+model TransportAllocation {
+  id        String   @id @default(cuid())
+  studentId String   @unique
+  routeId   String
+  stopName  String
+  since     DateTime @default(now())
+  route     Route    @relation(fields: [routeId], references: [id])
+  student   Student  @relation(fields: [studentId], references: [id])
+}
+
+model LibraryItem {
+  id        String        @id @default(cuid())
+  tenantId  String
+  title     String
+  author    String
+  isbn      String?
+  copies    Int           @default(1)
+  available Int           @default(1)
+  category  String?
+  tenant    Tenant        @relation(fields: [tenantId], references: [id])
+  loans     LibraryLoan[]
+}
+
+model LibraryLoan {
+  id         String      @id @default(cuid())
+  itemId     String
+  studentId  String
+  borrowedAt DateTime    @default(now())
+  dueAt      DateTime
+  returnedAt DateTime?
+  fine       Int         @default(0)
+  item       LibraryItem @relation(fields: [itemId], references: [id])
+  student    Student     @relation(fields: [studentId], references: [id])
+}
+
+model DisciplineIncident {
+  id         String   @id @default(cuid())
+  tenantId   String
+  studentId  String
+  date       DateTime @default(now())
+  category   String
+  severity   String   @default("LOW")
+  detail     String
+  reporterId String?
+  points     Int      @default(0)
+  student    Student  @relation(fields: [studentId], references: [id])
+}
+
+model Automation {
+  id        String    @id @default(cuid())
+  tenantId  String
+  name      String
+  trigger   String
+  eventType String?
+  condition String?
+  action    String
+  enabled   Boolean   @default(true)
+  runsCount Int       @default(0)
+  lastRunAt DateTime?
+  createdAt DateTime  @default(now())
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+}
+
+model AutomationRun {
+  id           String   @id @default(cuid())
+  automationId String
+  triggeredBy  String
+  status       String
+  detail       String
+  ranAt        DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  detail    String?
+  createdAt DateTime @default(now())
+  actor     User?    @relation("actor", fields: [actorId], references: [id])
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, createdAt])
+}
+
+model Banner {
+  id          String    @id @default(cuid())
+  tenantId    String?
+  title       String
+  body        String
+  audience    String    @default("ALL")
+  startsAt    DateTime  @default(now())
+  endsAt      DateTime?
+  impressions Int       @default(0)
+  clicks      Int       @default(0)
+  ctaLabel    String?
+  ctaHref     String?
+  status      String    @default("ACTIVE")
+  createdAt   DateTime  @default(now())
+  tenant      Tenant?   @relation(fields: [tenantId], references: [id])
+}
+
+model SubscriptionPlan {
+  id              String         @id @default(cuid())
+  code            String         @unique
+  name            String
+  perStudentPrice Int
+  features        String
+  moduleLimit     Int            @default(0)
+  storageGb       Int            @default(0)
+  supportLevel    String         @default("STANDARD")
+  subscriptions   Subscription[]
+  tenants         Tenant[]
+}
+
+model Subscription {
+  id           String           @id @default(cuid())
+  tenantId     String
+  planId       String
+  studentSeats Int              @default(500)
+  mrr          Int              @default(0)
+  status       String           @default("ACTIVE")
+  renewsAt     DateTime
+  createdAt    DateTime         @default(now())
+  plan         SubscriptionPlan @relation(fields: [planId], references: [id])
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  tenantId  String
+  userId    String?
+  role      String?
+  kind      String
+  title     String
+  body      String
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, userId])
+  @@index([tenantId, role])
+}
+
+model Event {
+  id          String    @id @default(cuid())
+  tenantId    String
+  title       String
+  description String?
+  venue       String?
+  audience    String    @default("ALL")
+  // EVENT | HOLIDAY | MEETING | ADMISSION | ACTIVITY | TRAINING — drives the
+  // central calendar category/colour. Default keeps existing rows as events.
+  category    String    @default("EVENT")
+  startsAt    DateTime
+  endsAt      DateTime?
+  createdAt   DateTime  @default(now())
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, startsAt])
+}
+
+model HostelRoom {
+  id          String             @id @default(cuid())
+  tenantId    String
+  block       String
+  number      String
+  capacity    Int                @default(4)
+  type        String             @default("NON_AC")
+  allocations HostelAllocation[]
+  tenant      Tenant             @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, block, number])
+}
+
+model HostelAllocation {
+  id        String     @id @default(cuid())
+  roomId    String
+  studentId String     @unique
+  since     DateTime   @default(now())
+  room      HostelRoom @relation(fields: [roomId], references: [id])
+  student   Student    @relation(fields: [studentId], references: [id])
+}
+
+model InventoryItem {
+  id           String          @id @default(cuid())
+  tenantId     String
+  name         String
+  category     String?
+  quantity     Int             @default(0)
+  reorderLevel Int             @default(5)
+  unitCost     Int             @default(0)
+  tenant       Tenant          @relation(fields: [tenantId], references: [id])
+  movements    StockMovement[]
+
+  @@index([tenantId])
+}
+
+model StockMovement {
+  id     String        @id @default(cuid())
+  itemId String
+  delta  Int
+  reason String
+  at     DateTime      @default(now())
+  item   InventoryItem @relation(fields: [itemId], references: [id])
+}
+
+model FaceProfile {
+  id          String       @id @default(cuid())
+  tenantId    String
+  subjectType String
+  studentId   String?      @unique
+  staffId     String?      @unique
+  status      String       @default("ACTIVE")
+  version     Int          @default(1)
+  sampleCount Int          @default(0)
+  avgQuality  Int          @default(0)
+  enrolledAt  DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  staff       Staff?       @relation(fields: [staffId], references: [id])
+  student     Student?     @relation(fields: [studentId], references: [id])
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  samples     FaceSample[]
+
+  @@index([tenantId, subjectType, status])
+}
+
+model FaceSample {
+  id         String      @id @default(cuid())
+  profileId  String
+  pose       String
+  dim        Int
+  embedding  String
+  quality    Int         @default(0)
+  brightness Int         @default(0)
+  sharpness  Int         @default(0)
+  version    Int         @default(1)
+  createdAt  DateTime    @default(now())
+  profile    FaceProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, pose])
+}
+
+model AttendanceDevice {
+  id         String                  @id @default(cuid())
+  tenantId   String
+  name       String
+  kind       String                  @default("WEBCAM")
+  location   String?
+  status     String                  @default("ONLINE")
+  lastSeenAt DateTime?
+  createdAt  DateTime                @default(now())
+  tenant     Tenant                  @relation(fields: [tenantId], references: [id])
+  sessions   FaceAttendanceSession[]
+
+  @@index([tenantId, status])
+}
+
+model FaceAttendanceSession {
+  id           String                 @id @default(cuid())
+  tenantId     String
+  classId      String
+  sectionId    String
+  subjectId    String?
+  period       Int?
+  teacherId    String?
+  deviceId     String?
+  status       String                 @default("OPEN")
+  threshold    Int                    @default(88)
+  lateAfterMin Int                    @default(10)
+  startedAt    DateTime               @default(now())
+  endedAt      DateTime?
+  records      FaceAttendanceRecord[]
+  class        Class                  @relation(fields: [classId], references: [id])
+  device       AttendanceDevice?      @relation(fields: [deviceId], references: [id])
+  section      Section                @relation(fields: [sectionId], references: [id])
+  subject      Subject?               @relation(fields: [subjectId], references: [id])
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id])
+  logs         RecognitionLog[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, startedAt])
+}
+
+model FaceAttendanceRecord {
+  id           String                @id @default(cuid())
+  sessionId    String
+  studentId    String
+  status       String
+  confidence   Int
+  recognizedAt DateTime              @default(now())
+  deviceInfo   String?
+  session      FaceAttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student      Student               @relation(fields: [studentId], references: [id])
+
+  @@unique([sessionId, studentId])
+  @@index([studentId, recognizedAt])
+}
+
+model RecognitionLog {
+  id               String                 @id @default(cuid())
+  tenantId         String
+  sessionId        String?
+  matchedStudentId String?
+  decision         String
+  confidence       Int                    @default(0)
+  latencyMs        Int                    @default(0)
+  livenessScore    Int                    @default(0)
+  at               DateTime               @default(now())
+  session          FaceAttendanceSession? @relation(fields: [sessionId], references: [id])
+  tenant           Tenant                 @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, at])
+  @@index([tenantId, decision])
+}
+
+model UnknownFace {
+  id         String   @id @default(cuid())
+  tenantId   String
+  sessionId  String?
+  embedding  String
+  dim        Int      @default(0)
+  bestScore  Int      @default(0)
+  resolved   Boolean  @default(false)
+  resolution String?
+  seenAt     DateTime @default(now())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, resolved])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Double-entry accounting engine. The institution's own books (kept strictly
+// separate from MANEXA SaaS billing). Every posted JournalEntry is balanced
+// (sum debit == sum credit) and immutable — corrections are new reversing
+// entries, never edits/deletes. Trial Balance / GL / P&L derive from these.
+// ─────────────────────────────────────────────────────────────────────────
+
+model LedgerAccount {
+  id            String         @id @default(cuid())
+  tenantId      String
+  code          String // e.g. "1000" Cash, "4000" Tuition Fees
+  name          String
+  type          String // ASSET | LIABILITY | INCOME | EXPENSE | EQUITY
+  normalBalance String // DEBIT | CREDIT
+  isSystem      Boolean        @default(true) // seeded default account
+  createdAt     DateTime       @default(now())
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  lines         JournalLine[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, type])
+}
+
+model JournalEntry {
+  id          String        @id @default(cuid())
+  tenantId    String
+  date        DateTime      @default(now())
+  description String
+  source      String        @default("MANUAL") // PAYMENT | EXPENSE | PAYROLL | MANUAL | REVERSAL
+  sourceId    String? // id of the originating Payment/Expense (idempotency key)
+  reference   String?
+  createdById String?
+  createdAt   DateTime      @default(now())
+  tenant      Tenant        @relation(fields: [tenantId], references: [id])
+  lines       JournalLine[]
+
+  // One journal per source record → posting a payment/expense twice is a no-op.
+  @@unique([tenantId, source, sourceId])
+  @@index([tenantId, date])
+}
+
+model JournalLine {
+  id        String        @id @default(cuid())
+  entryId   String
+  accountId String
+  debit     Int           @default(0) // INR integers (decimal-safe)
+  credit    Int           @default(0)
+  entry     JournalEntry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  account   LedgerAccount @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
+  @@index([entryId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Staff leave — real apply → review → balance workflow (replaces the static
+// Staff.leaveBalance number). Balances are DERIVED from approved records, never
+// stored/hardcoded. Approved leave surfaces on the central calendar.
+// ─────────────────────────────────────────────────────────────────────────
+
+model StaffLeave {
+  id           String    @id @default(cuid())
+  tenantId     String
+  staffId      String
+  type         String // CASUAL | SICK | EARNED | EMERGENCY | COMP | UNPAID
+  fromDate     DateTime
+  toDate       DateTime
+  days         Int
+  reason       String
+  status       String    @default("PENDING") // PENDING | APPROVED | REJECTED | CANCELLED
+  reviewedById String? // reviewer's User id
+  reviewedAt   DateTime?
+  reviewNote   String?
+  createdAt    DateTime  @default(now())
+  staff        Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([staffId, status])
+}

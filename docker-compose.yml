@@ -1,0 +1,89 @@
+# MANEXA — local production-parity stack.
+#   docker compose up --build            → db + redis + one-shot migrate + app
+#   docker compose run --rm seed         → load demo data (first run only)
+#
+# App/postgres/redis are the long-running trio; `migrate` is a one-shot that
+# applies Prisma migrations before the app starts (mirrors a k8s migration Job).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: manexa
+      POSTGRES_PASSWORD: manexa
+      POSTGRES_DB: manexa
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U manexa -d manexa"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: apply migrations, then exit. App waits for this to succeed.
+  migrate:
+    build:
+      context: .
+      target: builder
+    command: sh -c "npx prisma migrate deploy"
+    environment:
+      DATABASE_URL: postgresql://manexa:manexa@db:5432/manexa?schema=public
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # Optional one-shot: load demo data. Run manually on first boot:
+  #   docker compose run --rm seed
+  seed:
+    profiles: ["seed"]
+    build:
+      context: .
+      target: builder
+    command: sh -c "npx prisma db seed"
+    environment:
+      DATABASE_URL: postgresql://manexa:manexa@db:5432/manexa?schema=public
+      SESSION_SECRET: ${SESSION_SECRET:-manexa-local-compose-secret-0123456789}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      target: runner
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://manexa:manexa@db:5432/manexa?schema=public
+      REDIS_URL: redis://redis:6379
+      # Override in a real deploy. Default avoids the placeholder-secret guard.
+      SESSION_SECRET: ${SESSION_SECRET:-manexa-local-compose-secret-0123456789}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

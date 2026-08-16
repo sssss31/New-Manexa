@@ -1,0 +1,13 @@
+{
+  "name": "MANEXA — School Management",
+  "short_name": "MANEXA",
+  "description": "Run every academic, admin, finance and operations function of your institution.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#B6FF2A",
+  "icons": [
+    { "src": "/manexa-mark.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

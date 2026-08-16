@@ -1,0 +1,84 @@
+# MANEXA Kubernetes manifests — deployment, service, HPA, ingress.
+# Apply with: kubectl apply -f k8s/manexa.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manexa-web
+  labels: { app: manexa-web }
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: { app: manexa-web }
+  template:
+    metadata:
+      labels: { app: manexa-web }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: web
+          image: ghcr.io/manexa/manexa-web:latest # replaced by CI with the SHA tag
+          ports: [{ containerPort: 3000 }]
+          envFrom:
+            - secretRef: { name: manexa-secrets } # DATABASE_URL, SESSION_SECRET, REDIS_URL
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          readinessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: manexa-web
+spec:
+  selector: { app: manexa-web }
+  ports:
+    - port: 80
+      targetPort: 3000
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: manexa-web
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: manexa-web
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 65 }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: manexa-web
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 8m
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["app.manexa.in", "*.manexa.in"]
+      secretName: manexa-tls
+  rules:
+    - host: app.manexa.in
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: manexa-web, port: { number: 80 } }
