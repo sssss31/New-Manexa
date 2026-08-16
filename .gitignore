@@ -20,3 +20,5 @@ prisma/*.db
 .DS_Store
 next-env.d.ts
 coverage
+.env
+.env.local
